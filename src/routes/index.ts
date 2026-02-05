@@ -38,8 +38,8 @@ router.get('/trending/heatmap', optionalAuth, (req, res) => res.json({
   success: true, 
   data: { categories: [], priceRanges: [], bubbles: [] } 
 }));
-router.get('/user/preferences', authenticateToken, (req, res) => 
-  res.json({ success: true, data: req.user?.preferences || {} })
-);
+router.get('/user/preferences', authenticateToken, (req, res) => {
+  res.json({ success: true, data: req.user?.preferences || null });
+});
 
 export default router;
