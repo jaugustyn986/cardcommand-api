@@ -1,9 +1,9 @@
-import { User } from '@prisma/client';
+import { UserWithPreferences } from '../middleware/auth';
 
 declare global {
   namespace Express {
     interface Request {
-      user?: User;
+      user?: UserWithPreferences;
     }
   }
 }
