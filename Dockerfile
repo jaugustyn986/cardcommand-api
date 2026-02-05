@@ -3,10 +3,10 @@ FROM node:18-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY package.json ./
 COPY prisma ./prisma/
 
-RUN npm ci
+RUN npm install
 RUN npx prisma generate
 
 COPY . .
@@ -19,10 +19,10 @@ WORKDIR /app
 
 RUN apk add --no-cache dumb-init
 
-COPY package*.json ./
+COPY package.json ./
 COPY prisma ./prisma/
 
-RUN npm ci --only=production
+RUN npm install --production
 RUN npx prisma generate
 
 COPY --from=builder /app/dist ./dist
