@@ -21,8 +21,8 @@ export type UserWithPreferences = User & {
   preferences: UserPreferences | null;
 };
 
-// Generate JWT token
-export function generateToken(user: User): string {
+// Generate JWT token - accepts User or UserWithPreferences
+export function generateToken(user: User | UserWithPreferences): string {
   const payload: JWTPayload = {
     userId: user.id,
     email: user.email,
@@ -112,4 +112,73 @@ export async function authenticateToken(
           message: 'Token expired',
         },
       });
-      return
+      return;
+    }
+
+    res.status(500).json({
+      success: false,
+      error: {
+        code: 'INTERNAL_ERROR',
+        message: 'Authentication failed',
+      },
+    });
+  }
+}
+
+// Optional authentication (for public routes that can be enhanced with auth)
+export async function optionalAuth(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    const authHeader = req.headers.authorization;
+    const token = authHeader?.split(' ')[1];
+
+    if (token) {
+      const payload = verifyToken(token);
+      const user = await prisma.user.findUnique({
+        where: { id: payload.userId },
+        include: { preferences: true },
+      }) as UserWithPreferences | null;
+      
+      if (user && user.status === 'active') {
+        req.user = user;
+      }
+    }
+
+    next();
+  } catch {
+    // Ignore errors for optional auth
+    next();
+  }
+}
+
+// Plan-based authorization middleware
+export function requirePlan(...allowedPlans: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    if (!allowedPlans.includes(req.user.plan)) {
+      res.status(403).json({
+        success: false,
+        error: {
+          code: 'PLAN_REQUIRED',
+          message: `This feature requires ${allowedPlans.join(' or ')} plan`,
+        },
+      });
+      return;
+    }
+
+    next();
+  };
+}
