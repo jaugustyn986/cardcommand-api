@@ -62,5 +62,8 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
+# Create a startup script
+RUN echo '#!/bin/sh\nnpx prisma migrate deploy\nnode dist/index.js' > /app/start.sh && chmod +x /app/start.sh
+
 # Start the application
-CMD ["dumb-init", "node", "dist/index.js"]
+CMD ["dumb-init", "/app/start.sh"]
