@@ -11,6 +11,7 @@ import routes from './routes';
 import { connectDatabase, disconnectDatabase, isConnected } from './config/database';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { prisma } from './config/database';
+import type { Category, Liquidity } from '@prisma/client';
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -30,6 +31,7 @@ async function seedDatabase() {
       
       const deals = [
         {
+          id: 'wembanyama-2023-prizm',
           cardName: '2023 Victor Wembanyama Prizm Silver',
           cardSet: 'Prizm',
           year: 2023,
@@ -44,8 +46,8 @@ async function seedDatabase() {
           sellerRating: 99.2,
           sellerFeedback: 15420,
           listingUrl: 'https://ebay.com',
-          category: 'basketball',
-          liquidity: 'High',
+          category: 'basketball' as Category,
+          liquidity: 'High' as Liquidity,
           lastSoldPrice: 420,
           thirtyDayAvg: 445,
           ninetyDayTrend: 12.5,
@@ -54,6 +56,7 @@ async function seedDatabase() {
           isActive: true,
         },
         {
+          id: 'zion-2019-prizm',
           cardName: '2019 Zion Williamson Prizm Base',
           cardSet: 'Prizm',
           year: 2019,
@@ -68,8 +71,8 @@ async function seedDatabase() {
           sellerRating: 98.7,
           sellerFeedback: 3200,
           listingUrl: 'https://tcgplayer.com',
-          category: 'basketball',
-          liquidity: 'High',
+          category: 'basketball' as Category,
+          liquidity: 'High' as Liquidity,
           lastSoldPrice: 165,
           thirtyDayAvg: 178,
           ninetyDayTrend: -3.2,
@@ -78,6 +81,7 @@ async function seedDatabase() {
           isActive: true,
         },
         {
+          id: 'charizard-1999-base',
           cardName: 'Charizard Base Set 1st Edition',
           cardSet: 'Base Set',
           year: 1999,
@@ -92,8 +96,8 @@ async function seedDatabase() {
           sellerRating: 100,
           sellerFeedback: 850,
           listingUrl: 'https://ebay.com',
-          category: 'pokemon',
-          liquidity: 'Medium',
+          category: 'pokemon' as Category,
+          liquidity: 'Medium' as Liquidity,
           lastSoldPrice: 7800,
           thirtyDayAvg: 8450,
           ninetyDayTrend: 8.7,
@@ -102,6 +106,7 @@ async function seedDatabase() {
           isActive: true,
         },
         {
+          id: 'franco-2022-bowman',
           cardName: '2022 Wander Franco Bowman Chrome',
           cardSet: 'Bowman Chrome',
           year: 2022,
@@ -116,8 +121,8 @@ async function seedDatabase() {
           sellerRating: 97.5,
           sellerFeedback: 1200,
           listingUrl: 'https://ebay.com',
-          category: 'baseball',
-          liquidity: 'High',
+          category: 'baseball' as Category,
+          liquidity: 'High' as Liquidity,
           lastSoldPrice: 310,
           thirtyDayAvg: 318,
           ninetyDayTrend: -1.2,
@@ -126,6 +131,7 @@ async function seedDatabase() {
           isActive: true,
         },
         {
+          id: 'macjones-2021-prizm',
           cardName: '2021 Mac Jones Prizm Silver',
           cardSet: 'Prizm',
           year: 2021,
@@ -140,8 +146,8 @@ async function seedDatabase() {
           sellerRating: 99.8,
           sellerFeedback: 5600,
           listingUrl: 'https://comc.com',
-          category: 'football',
-          liquidity: 'Medium',
+          category: 'football' as Category,
+          liquidity: 'Medium' as Liquidity,
           lastSoldPrice: 245,
           thirtyDayAvg: 275,
           ninetyDayTrend: -8.5,
@@ -150,6 +156,7 @@ async function seedDatabase() {
           isActive: true,
         },
         {
+          id: 'caitlin-2024-prizm',
           cardName: '2024 Caitlin Clark Prizm WNBA',
           cardSet: 'Prizm WNBA',
           year: 2024,
@@ -163,8 +170,8 @@ async function seedDatabase() {
           sellerRating: 98.9,
           sellerFeedback: 2300,
           listingUrl: 'https://ebay.com',
-          category: 'basketball',
-          liquidity: 'High',
+          category: 'basketball' as Category,
+          liquidity: 'High' as Liquidity,
           lastSoldPrice: 110,
           thirtyDayAvg: 145,
           ninetyDayTrend: 45.2,
@@ -175,14 +182,10 @@ async function seedDatabase() {
       ];
 
       for (const deal of deals) {
-        const id = deal.cardName.replace(/\s+/g, '-').toLowerCase();
         await prisma.deal.upsert({
-          where: { id },
+          where: { id: deal.id },
           update: {},
-          create: {
-            id,
-            ...deal,
-          },
+          create: deal,
         });
       }
 
