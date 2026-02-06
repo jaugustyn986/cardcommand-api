@@ -1,25 +1,30 @@
 {
   "name": "cardcommand-api",
   "version": "1.0.0",
-  "description": "CardCommand Center API - Backend for card trading platform",
+  "description": "CardCommand Center API - Sports card & TCG deal aggregation platform",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "ts-node-dev --respawn --transpile-only src/index.ts",
-    "build": "tsc",
     "start": "node dist/index.js",
+    "build": "tsc",
+    "dev": "tsx watch src/index.ts",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "tsx prisma/seed.ts",
     "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev",
     "db:studio": "prisma studio",
-    "db:seed": "ts-node prisma/seed.ts",
     "lint": "eslint src --ext .ts",
     "test": "jest"
   },
-  "keywords": ["cards", "trading", "api", "pokemon", "nba"],
-  "author": "CardCommand",
-  "license": "ISC",
+  "keywords": [
+    "trading-cards",
+    "sports-cards",
+    "api",
+    "deals"
+  ],
+  "author": "",
+  "license": "MIT",
   "dependencies": {
-    "@prisma/client": "^5.7.0",
-    "axios": "^1.6.2",
+    "@prisma/client": "^5.22.0",
+    "axios": "^1.6.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
@@ -28,21 +33,18 @@
     "ioredis": "^5.3.2",
     "jsonwebtoken": "^9.0.2",
     "morgan": "^1.10.0",
-    "node-cron": "^3.0.3",
     "zod": "^3.22.4"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/cors": "^2.8.17",
+    "@types/cors": "^2.8.16",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.5",
     "@types/morgan": "^1.9.9",
-    "@types/node": "^20.10.4",
-    "@types/node-cron": "^3.0.11",
-    "prisma": "^5.7.0",
-    "ts-node": "^10.9.2",
-    "ts-node-dev": "^2.0.0",
-    "typescript": "^5.3.3"
+    "@types/node": "^20.9.0",
+    "prisma": "^5.22.0",
+    "tsx": "^4.1.4",
+    "typescript": "^5.2.2"
   },
   "engines": {
     "node": ">=18.0.0"
