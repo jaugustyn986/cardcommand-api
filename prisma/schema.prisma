@@ -61,7 +61,6 @@ model User {
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
-  // Relations
   preferences   UserPreferences?
   portfolio     PortfolioItem[]
   trackedDeals  TrackedDeal[]
@@ -78,7 +77,6 @@ model UserPreferences {
   dealAlertThreshold    Float    @default(20)
   notificationChannels  String[]
 
-  // Relations
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -112,10 +110,7 @@ model Deal {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   
-  // Relations
   trackedBy       TrackedDeal[]
-  
-  // Strategy stored as JSON
   strategy        Json?
 
   @@index([category])
@@ -129,7 +124,6 @@ model TrackedDeal {
   dealId    String
   createdAt DateTime @default(now())
 
-  // Relations
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   deal  Deal  @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
@@ -154,7 +148,6 @@ model PortfolioItem {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  // Relations
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -187,6 +180,6 @@ model TrendingItem {
   priceChange30d  Float    @default(0)
   volumeIncrease  Float    @default(0)
   searchVolume    Int      @default(0)
-  sentiment       String   @default('Neutral')
+  sentiment       String   @default("Neutral")
   calculatedAt    DateTime @default(now())
 }
