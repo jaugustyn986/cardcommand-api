@@ -18,13 +18,16 @@ const PORT = process.env.PORT || 3001;
 const NODE_ENV = process.env.NODE_ENV || 'development';
 
 // ============================================
-// Seed Function
+// Seed Function (Non-blocking)
 // ============================================
 
 async function seedDatabase() {
   try {
+    // Wait for DB to be ready
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
     // Check if deals exist
-    const dealCount = await prisma.deal.count();
+    const dealCount = await prisma.deal.count().catch(() => 0);
     
     if (dealCount === 0) {
       console.log('🌱 Database empty, seeding...');
@@ -194,7 +197,8 @@ async function seedDatabase() {
       console.log(`✅ Database already has ${dealCount} deals`);
     }
   } catch (error) {
-    console.error('❌ Seed error:', error);
+    console.error('❌ Seed error (non-fatal):', (error as Error).message);
+    // Don't crash - app works without seed
   }
 }
 
@@ -258,8 +262,8 @@ async function startServer() {
   // Connect to database
   await connectDatabase();
 
-  // Seed database if empty
-  await seedDatabase();
+  // Seed database if empty (non-blocking)
+  seedDatabase().catch(() => {});
 
   // Start server
   app.listen(PORT, () => {
