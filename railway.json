@@ -4,7 +4,7 @@
     "builder": "DOCKERFILE"
   },
   "deploy": {
-    "startCommand": "sh -c 'node dist/index.js & sleep 5 && npx prisma migrate deploy && wait'",
+    "startCommand": "npx prisma migrate deploy && node dist/index.js",
     "healthcheckPath": "/health",
     "healthcheckTimeout": 100,
     "restartPolicyType": "ON_FAILURE",
