@@ -63,6 +63,69 @@ export async function getPortfolio(
   }
 }
 
+// Get grading queue
+export async function getGradingQueue(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw Errors.unauthorized();
+    }
+
+    const queue = await prisma.portfolioItem.findMany({
+      where: { 
+        userId: req.user.id,
+        inGradingQueue: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    res.json({
+      success: true,
+      data: queue,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+// Add item to grading queue
+export async function addToGradingQueue(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      throw Errors.unauthorized();
+    }
+
+    const { id } = req.params;
+
+    const item = await prisma.portfolioItem.findFirst({
+      where: { id, userId: req.user.id },
+    });
+
+    if (!item) {
+      throw Errors.notFound('Portfolio item');
+    }
+
+    const updated = await prisma.portfolioItem.update({
+      where: { id },
+      data: { inGradingQueue: true },
+    });
+
+    res.json({
+      success: true,
+      data: updated,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
 // Add item to portfolio
 export async function addPortfolioItem(
   req: Request,
