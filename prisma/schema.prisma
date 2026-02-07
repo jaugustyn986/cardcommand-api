@@ -58,61 +58,66 @@ model User {
   name          String?
   plan          Plan            @default(free)
   status        UserStatus      @default(active)
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  createdAt     DateTime        @default(now()) @map("created_at")
+  updatedAt     DateTime        @updatedAt @map("updated_at")
 
   preferences   UserPreferences?
   portfolio     PortfolioItem[]
   trackedDeals  TrackedDeal[]
+
+  @@map("users")
 }
 
 model UserPreferences {
   id                    String   @id @default(uuid())
-  userId                String   @unique
+  userId                String   @unique @map("user_id")
   categories            String[]
-  priceRangeMin         Float    @default(0)
-  priceRangeMax         Float    @default(0)
+  priceRangeMin         Float    @default(0) @map("price_range_min")
+  priceRangeMax         Float    @default(0) @map("price_range_max")
   grades                String[]
   graders               String[]
-  dealAlertThreshold    Float    @default(20)
-  notificationChannels  String[]
+  dealAlertThreshold    Float    @default(20) @map("deal_alert_threshold")
+  notificationChannels  String[] @map("notification_channels")
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_preferences")
 }
 
 model Deal {
   id              String   @id @default(uuid())
-  cardName        String
-  cardSet         String
+  cardName        String   @map("card_name")
+  cardSet         String   @map("card_set")
   year            Int
-  cardNumber      String?
+  cardNumber      String?  @map("card_number")
   variation       String?
   grade           String
   grader          String?
-  marketPrice     Float
-  dealPrice       Float
-  savingsPercent  Float
-  savingsAmount   Float
+  marketPrice     Float    @map("market_price")
+  dealPrice       Float    @map("deal_price")
+  savingsPercent  Float    @map("savings_percent")
+  savingsAmount   Float    @map("savings_amount")
   marketplace     String
-  sellerRating    Float
-  sellerFeedback  Int
-  listingUrl      String
-  imageUrl        String?
+  sellerRating    Float    @map("seller_rating")
+  sellerFeedback  Int      @map("seller_feedback")
+  listingUrl      String   @map("listing_url")
+  imageUrl        String?  @map("image_url")
   category        Category
   liquidity       Liquidity
-  lastSoldPrice   Float?
-  thirtyDayAvg    Float?
-  ninetyDayTrend  Float?
-  popGraded       Int?
-  popGrade10      Int?
-  isActive        Boolean  @default(true)
-  expiresAt       DateTime?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  lastSoldPrice   Float?   @map("last_sold_price")
+  thirtyDayAvg    Float?   @map("thirty_day_avg")
+  ninetyDayTrend  Float?   @map("ninety_day_trend")
+  popGraded       Int?     @map("pop_graded")
+  popGrade10      Int?     @map("pop_grade_10")
+  isActive        Boolean  @default(true) @map("is_active")
+  expiresAt       DateTime? @map("expires_at")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
   
   trackedBy       TrackedDeal[]
   strategy        Json?
 
+  @@map("deals")
   @@index([category])
   @@index([isActive])
   @@index([createdAt])
@@ -120,66 +125,73 @@ model Deal {
 
 model TrackedDeal {
   id        String   @id @default(uuid())
-  userId    String
-  dealId    String
-  createdAt DateTime @default(now())
+  userId    String   @map("user_id")
+  dealId    String   @map("deal_id")
+  createdAt DateTime @default(now()) @map("created_at")
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   deal  Deal  @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   @@unique([userId, dealId])
+  @@map("tracked_deals")
 }
 
 model PortfolioItem {
   id              String   @id @default(uuid())
-  userId          String
-  cardName        String
-  cardSet         String
+  userId          String   @map("user_id")
+  cardName        String   @map("card_name")
+  cardSet         String   @map("card_set")
   year            Int
   grade           String
   grader          String?
-  currentValue    Float
-  purchasePrice   Float
-  purchaseDate    DateTime @default(now())
+  currentValue    Float    @map("current_value")
+  purchasePrice   Float    @map("purchase_price")
+  purchaseDate    DateTime @default(now()) @map("purchase_date")
   quantity        Int      @default(1)
-  imageUrl        String?
+  imageUrl        String?  @map("image_url")
   notes           String?
-  inGradingQueue  Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  inGradingQueue  Boolean  @default(false) @map("in_grading_queue")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("portfolio_items")
 }
 
 model Release {
   id              String   @id @default(uuid())
   name            String
-  releaseDate     DateTime
+  releaseDate     DateTime @map("release_date")
   category        Category
   manufacturer    String
   msrp            Float
-  estimatedResale Float?
-  hypeScore       Float?
-  imageUrl        String?
-  topChases       String[]
-  printRun        String?
+  estimatedResale Float?   @map("estimated_resale")
+  hypeScore       Float?   @map("hype_score")
+  imageUrl        String?  @map("image_url")
+  topChases       String[] @map("top_chases")
+  printRun        String?  @map("print_run")
   description     String?
-  isReleased      Boolean  @default(false)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  isReleased      Boolean  @default(false) @map("is_released")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("releases")
 }
 
 model TrendingItem {
   id              String   @id @default(uuid())
-  cardName        String
-  cardSet         String
+  cardName        String   @map("card_name")
+  cardSet         String   @map("card_set")
   category        Category
-  currentPrice    Float
-  priceChange24h  Float    @default(0)
-  priceChange7d   Float    @default(0)
-  priceChange30d  Float    @default(0)
-  volumeIncrease  Float    @default(0)
-  searchVolume    Int      @default(0)
+  currentPrice    Float    @map("current_price")
+  priceChange24h  Float    @default(0) @map("price_change_24h")
+  priceChange7d   Float    @default(0) @map("price_change_7d")
+  priceChange30d  Float    @default(0) @map("price_change_30d")
+  volumeIncrease  Float    @default(0) @map("volume_increase")
+  searchVolume    Int      @default(0) @map("search_volume")
   sentiment       String   @default("Neutral")
-  calculatedAt    DateTime @default(now())
+  calculatedAt    DateTime @default(now()) @map("calculated_at")
+
+  @@map("trending_items")
 }
