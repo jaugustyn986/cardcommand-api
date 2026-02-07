@@ -14,7 +14,7 @@ WORKDIR /app
 COPY package.json ./
 COPY prisma ./prisma/
 
-# Install dependencies (using npm install instead of npm ci since we don't have package-lock.json)
+# Install dependencies
 RUN npm install
 
 # Generate Prisma client
@@ -47,6 +47,9 @@ RUN npx prisma generate
 # Copy built files from builder
 COPY --from=builder /app/dist ./dist
 
+# Run migrations (will use DATABASE_URL env var at runtime)
+# We'll do this in start.sh instead
+
 # Create non-root user
 RUN addgroup -g 1001 -S nodejs
 RUN adduser -S nodejs -u 1001
@@ -62,8 +65,5 @@ EXPOSE 3001
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
 
-# Create a startup script
-RUN echo '#!/bin/sh\nnpx prisma migrate deploy\nnode dist/index.js' > /app/start.sh && chmod +x /app/start.sh
-
-# Start the application
-CMD ["dumb-init", "/app/start.sh"]
+# Start the application with migrations
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
