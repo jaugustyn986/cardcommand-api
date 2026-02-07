@@ -4,7 +4,6 @@
 
 import { Request, Response, NextFunction } from 'express';
 import { prisma } from '../config/database';
-import { cache, cacheKeys } from '../config/redis';
 import { Errors } from '../middleware/errorHandler';
 
 // Get deals with filters
@@ -17,13 +16,10 @@ export async function getDeals(
     const page = parseInt(req.query.page as string) || 1;
     const perPage = Math.min(parseInt(req.query.perPage as string) || 20, 100);
 
-    // Build where clause
     const where: Record<string, unknown> = { isActive: true };
 
-    // Get total count
     const total = await prisma.deal.count({ where }).catch(() => 0);
 
-    // Get deals
     const deals = await prisma.deal.findMany({
       where,
       orderBy: { createdAt: 'desc' },
@@ -31,20 +27,18 @@ export async function getDeals(
       take: perPage,
     }).catch(() => []);
 
-    const result = {
+    res.json({ 
+      success: true, 
       data: deals,
       meta: {
         total,
         page,
         perPage,
         totalPages: Math.ceil(total / perPage) || 1,
-      },
-    };
-
-    res.json({ success: true, ...result });
+      }
+    });
   } catch (error) {
     console.error('Get deals error:', error);
-    // Return empty array instead of crashing
     res.json({ 
       success: true, 
       data: [],
@@ -76,7 +70,7 @@ export async function getDeal(
   }
 }
 
-// Track a deal (add to user's tracked deals)
+// Track a deal
 export async function trackDeal(
   req: Request,
   res: Response,
@@ -89,7 +83,6 @@ export async function trackDeal(
 
     const { id } = req.params;
 
-    // Check if deal exists
     const deal = await prisma.deal.findUnique({
       where: { id },
     });
@@ -98,7 +91,6 @@ export async function trackDeal(
       throw Errors.notFound('Deal');
     }
 
-    // Create tracked deal
     await prisma.trackedDeal.create({
       data: {
         userId: req.user.id,
