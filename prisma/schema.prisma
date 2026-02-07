@@ -1,3 +1,7 @@
+// ============================================
+// CardCommand Center - Database Schema
+// ============================================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,92 +11,9 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id        String   @id @default(uuid())
-  email     String   @unique
-  password  String
-  name      String?
-  plan      Plan     @default(free)
-  status    UserStatus @default(active)
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  preferences UserPreferences?
-  portfolio   PortfolioItem[]
-  trackedDeals TrackedDeal[]
-  releaseReminders ReleaseReminder[]
-
-  @@map("users")
-}
-
-enum Plan {
-  free
-  premium
-  pro
-}
-
-enum UserStatus {
-  active
-  suspended
-  deleted
-}
-
-model UserPreferences {
-  id                 String   @id @default(uuid())
-  userId             String   @unique @map("user_id")
-  categories         String[] @default([])
-  priceRangeMin      Int      @default(0) @map("price_range_min")
-  priceRangeMax      Int      @default(10000) @map("price_range_max")
-  grades             String[] @default([])
-  graders            String[] @default([])
-  dealAlertThreshold Int      @default(15) @map("deal_alert_threshold")
-  notificationChannels String[] @default(["email"]) @map("notification_channels")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@map("user_preferences")
-}
-
-model Deal {
-  id              String    @id @default(uuid())
-  cardName        String    @map("card_name")
-  cardSet         String    @map("card_set")
-  year            Int
-  cardNumber      String?   @map("card_number")
-  variation       String?
-  grade           String
-  grader          String?
-  marketPrice     Decimal   @map("market_price") @db.Decimal(10, 2)
-  dealPrice       Decimal   @map("deal_price") @db.Decimal(10, 2)
-  savingsPercent  Decimal   @map("savings_percent") @db.Decimal(5, 2)
-  savingsAmount   Decimal   @map("savings_amount") @db.Decimal(10, 2)
-  marketplace     String
-  sellerRating    Decimal   @map("seller_rating") @db.Decimal(3, 1)
-  sellerFeedback  Int       @map("seller_feedback")
-  listingUrl      String    @map("listing_url")
-  imageUrl        String?   @map("image_url")
-  category        Category
-  liquidity       Liquidity
-  lastSoldPrice   Decimal?  @map("last_sold_price") @db.Decimal(10, 2)
-  thirtyDayAvg    Decimal?  @map("thirty_day_avg") @db.Decimal(10, 2)
-  ninetyDayTrend  Decimal?  @map("ninety_day_trend") @db.Decimal(5, 2)
-  popGraded       Int?      @map("pop_graded")
-  popGrade10      Int?      @map("pop_grade_10")
-  isActive        Boolean   @default(true) @map("is_active")
-  expiresAt       DateTime? @map("expires_at")
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-
-  trackedBy TrackedDeal[]
-
-  @@index([category])
-  @@index([isActive])
-  @@index([createdAt])
-  @@index([savingsPercent])
-  @@map("deals")
-}
+// ============================================
+// Enums
+// ============================================
 
 enum Category {
   basketball
@@ -114,129 +35,158 @@ enum Liquidity {
   Low
 }
 
+enum Plan {
+  free
+  premium
+  pro
+}
+
+enum UserStatus {
+  active
+  inactive
+  suspended
+}
+
+// ============================================
+// Models
+// ============================================
+
+model User {
+  id            String          @id @default(uuid())
+  email         String          @unique
+  password      String
+  name          String?
+  plan          Plan            @default(free)
+  status        UserStatus      @default(active)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  // Relations
+  preferences   UserPreferences?
+  portfolio     PortfolioItem[]
+  trackedDeals  TrackedDeal[]
+}
+
+model UserPreferences {
+  id                    String   @id @default(uuid())
+  userId                String   @unique
+  categories            String[]
+  priceRangeMin         Float    @default(0)
+  priceRangeMax         Float    @default(0)
+  grades                String[]
+  graders               String[]
+  dealAlertThreshold    Float    @default(20)
+  notificationChannels  String[]
+
+  // Relations
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Deal {
+  id              String   @id @default(uuid())
+  cardName        String
+  cardSet         String
+  year            Int
+  cardNumber      String?
+  variation       String?
+  grade           String
+  grader          String?
+  marketPrice     Float
+  dealPrice       Float
+  savingsPercent  Float
+  savingsAmount   Float
+  marketplace     String
+  sellerRating    Float
+  sellerFeedback  Int
+  listingUrl      String
+  imageUrl        String?
+  category        Category
+  liquidity       Liquidity
+  lastSoldPrice   Float?
+  thirtyDayAvg    Float?
+  ninetyDayTrend  Float?
+  popGraded       Int?
+  popGrade10      Int?
+  isActive        Boolean  @default(true)
+  expiresAt       DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Relations
+  trackedBy       TrackedDeal[]
+  
+  // Strategy stored as JSON
+  strategy        Json?
+
+  @@index([category])
+  @@index([isActive])
+  @@index([createdAt])
+}
+
 model TrackedDeal {
   id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  dealId    String   @map("deal_id")
-  createdAt DateTime @default(now()) @map("created_at")
+  userId    String
+  dealId    String
+  createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  deal Deal @relation(fields: [dealId], references: [id], onDelete: Cascade)
+  // Relations
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  deal  Deal  @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   @@unique([userId, dealId])
-  @@map("tracked_deals")
 }
 
 model PortfolioItem {
-  id            String   @id @default(uuid())
-  userId        String   @map("user_id")
-  cardName      String   @map("card_name")
-  cardSet       String   @map("card_set")
-  year          Int
-  grade         String
-  grader        String?
-  currentValue  Decimal  @map("current_value") @db.Decimal(10, 2)
-  purchasePrice Decimal  @map("purchase_price") @db.Decimal(10, 2)
-  purchaseDate  DateTime @default(now()) @map("purchase_date")
-  quantity      Int      @default(1)
-  imageUrl      String?  @map("image_url")
-  notes         String?
-  inGradingQueue Boolean @default(false) @map("in_grading_queue")
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
+  id              String   @id @default(uuid())
+  userId          String
+  cardName        String
+  cardSet         String
+  year            Int
+  grade           String
+  grader          String?
+  currentValue    Float
+  purchasePrice   Float
+  purchaseDate    DateTime @default(now())
+  quantity        Int      @default(1)
+  imageUrl        String?
+  notes           String?
+  inGradingQueue  Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([userId])
-  @@map("portfolio_items")
+  // Relations
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Release {
   id              String   @id @default(uuid())
   name            String
-  releaseDate     DateTime @map("release_date")
+  releaseDate     DateTime
   category        Category
   manufacturer    String
-  msrp            Decimal  @db.Decimal(10, 2)
-  estimatedResale Decimal? @map("estimated_resale") @db.Decimal(10, 2)
-  hypeScore       Decimal? @map("hype_score") @db.Decimal(3, 1)
-  imageUrl        String?  @map("image_url")
-  topChases       String[] @default([]) @map("top_chases")
-  printRun        String?  @map("print_run")
+  msrp            Float
+  estimatedResale Float?
+  hypeScore       Float?
+  imageUrl        String?
+  topChases       String[]
+  printRun        String?
   description     String?
-  isReleased      Boolean  @default(false) @map("is_released")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  reminders ReleaseReminder[]
-
-  @@index([releaseDate])
-  @@index([category])
-  @@map("releases")
-}
-
-model ReleaseReminder {
-  id        String   @id @default(uuid())
-  userId    String   @map("user_id")
-  releaseId String   @map("release_id")
-  createdAt DateTime @default(now()) @map("created_at")
-
-  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  release Release @relation(fields: [releaseId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, releaseId])
-  @@map("release_reminders")
-}
-
-model PriceHistory {
-  id          String   @id @default(uuid())
-  cardName    String   @map("card_name")
-  cardSet     String   @map("card_set")
-  year        Int
-  grade       String
-  grader      String?
-  price       Decimal  @db.Decimal(10, 2)
-  source      String
-  soldAt      DateTime @map("sold_at")
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  @@index([cardName, cardSet, year, grade])
-  @@index([soldAt])
-  @@map("price_history")
+  isReleased      Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model TrendingItem {
-  id              String    @id @default(uuid())
-  cardName        String    @map("card_name")
-  cardSet         String    @map("card_set")
+  id              String   @id @default(uuid())
+  cardName        String
+  cardSet         String
   category        Category
-  currentPrice    Decimal   @map("current_price") @db.Decimal(10, 2)
-  priceChange24h  Decimal   @map("price_change_24h") @db.Decimal(5, 2)
-  priceChange7d   Decimal   @map("price_change_7d") @db.Decimal(5, 2)
-  priceChange30d  Decimal   @map("price_change_30d") @db.Decimal(5, 2)
-  volumeIncrease  Int       @map("volume_increase")
-  searchVolume    Int       @map("search_volume")
-  sentiment       Sentiment @default(Neutral)
-  calculatedAt    DateTime  @default(now()) @map("calculated_at")
-
-  @@index([category])
-  @@index([calculatedAt])
-  @@map("trending_items")
-}
-
-enum Sentiment {
-  Bullish
-  Bearish
-  Neutral
-}
-
-model ApiCache {
-  id          String   @id @default(uuid())
-  key         String   @unique
-  data        String
-  expiresAt   DateTime @map("expires_at")
-  createdAt   DateTime @default(now()) @map("created_at")
-
-  @@index([expiresAt])
-  @@map("api_cache")
+  currentPrice    Float
+  priceChange24h  Float    @default(0)
+  priceChange7d   Float    @default(0)
+  priceChange30d  Float    @default(0)
+  volumeIncrease  Float    @default(0)
+  searchVolume    Int      @default(0)
+  sentiment       String   @default('Neutral')
+  calculatedAt    DateTime @default(now())
 }
