@@ -206,20 +206,13 @@ export const setReminder = async (req: AuthenticatedRequest, res: Response) => {
       });
     }
 
-    // Create or update reminder
-    const reminder = await prisma.releaseReminder.upsert({
-      where: {
-        userId_releaseId: {
-          userId,
-          releaseId: id
-        }
-      },
-      update: {},
-      create: {
-        userId,
-        releaseId: id
-      }
-    });
+    // Use raw query to create reminder
+    const reminder = await prisma.$queryRaw`
+      INSERT INTO "release_reminders" ("id", "user_id", "release_id", "created_at")
+      VALUES (gen_random_uuid(), ${userId}, ${id}, NOW())
+      ON CONFLICT ("user_id", "release_id") DO NOTHING
+      RETURNING *
+    `;
 
     res.json({
       success: true,
@@ -250,12 +243,11 @@ export const removeReminder = async (req: AuthenticatedRequest, res: Response) =
       });
     }
 
-    await prisma.releaseReminder.deleteMany({
-      where: {
-        userId,
-        releaseId: id
-      }
-    });
+    // Use raw query to delete reminder
+    await prisma.$executeRaw`
+      DELETE FROM "release_reminders" 
+      WHERE "user_id" = ${userId} AND "release_id" = ${id}
+    `;
 
     res.json({
       success: true,
@@ -285,37 +277,4 @@ export const getReminders = async (req: AuthenticatedRequest, res: Response) => 
       });
     }
 
-    const reminders = await prisma.releaseReminder.findMany({
-      where: { userId },
-      include: {
-        release: true
-      }
-    });
-
-    res.json({
-      success: true,
-      data: reminders.map(r => ({
-        id: r.id,
-        release: {
-          id: r.release.id,
-          name: r.release.name,
-          releaseDate: r.release.releaseDate.toISOString(),
-          category: r.release.category,
-          manufacturer: r.release.manufacturer,
-          msrp: Number(r.release.msrp),
-          estimatedResale: r.release.estimatedResale ? Number(r.release.estimatedResale) : undefined,
-          hypeScore: r.release.hypeScore ? Number(r.release.hypeScore) : undefined,
-          topChases: r.release.topChases,
-          isReleased: r.release.isReleased,
-        },
-        createdAt: r.createdAt.toISOString()
-      }))
-    });
-  } catch (error) {
-    console.error('Error fetching reminders:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch reminders'
-    });
-  }
-};
+    // Use raw query to
