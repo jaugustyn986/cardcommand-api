@@ -3,7 +3,7 @@
 // ============================================
 
 import { Request } from 'express';
-import { User, Plan, Category, Liquidity, Sentiment } from '@prisma/client';
+import { User, Plan, Category, Liquidity } from '@prisma/client';
 
 // ============================================
 // Express Extensions
@@ -12,17 +12,9 @@ import { User, Plan, Category, Liquidity, Sentiment } from '@prisma/client';
 declare global {
   namespace Express {
     interface Request {
-      user?: User;
+      user?: any;
     }
   }
-}
-
-// ============================================
-// Authenticated Request Type
-// ============================================
-
-export interface AuthenticatedRequest extends Request {
-  user: User;
 }
 
 // ============================================
@@ -155,7 +147,6 @@ export interface PSAPopReport {
   grade10: number;
   grade9: number;
   grade8: number;
-  // ... other grades
 }
 
 // ============================================
@@ -189,4 +180,4 @@ export interface StrategyFactor {
 // Re-exports from Prisma
 // ============================================
 
-export { User, Plan, Category, Liquidity, Sentiment };
+export { User, Plan, Category, Liquidity };
