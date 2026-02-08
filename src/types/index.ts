@@ -5,17 +5,8 @@
 import { Request } from 'express';
 import { User, Plan, Category, Liquidity } from '@prisma/client';
 
-// ============================================
-// Express Extensions
-// ============================================
-
-declare global {
-  namespace Express {
-    interface Request {
-      user?: any;
-    }
-  }
-}
+// Re-export UserWithPreferences from auth middleware
+export type { UserWithPreferences } from '../middleware/auth';
 
 // ============================================
 // API Response Types
