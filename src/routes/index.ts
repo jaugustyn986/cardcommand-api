@@ -51,9 +51,9 @@ router.post('/portfolio/:id/grading-queue', authenticateToken, portfolioControll
 
 router.get('/releases', optionalAuth, releasesController.getReleases);
 router.get('/releases/:id', optionalAuth, releasesController.getRelease);
-router.post('/releases/:id/remind', authenticateToken, releasesController.setReminder);
-router.delete('/releases/:id/remind', authenticateToken, releasesController.removeReminder);
-router.get('/releases/reminders/list', authenticateToken, releasesController.getReminders);
+router.post('/releases/:id/remind', optionalAuth, releasesController.setReminder);
+router.delete('/releases/:id/remind', optionalAuth, releasesController.removeReminder);
+router.get('/releases/reminders/list', optionalAuth, releasesController.getReminders);
 
 // ============================================
 // Trending Routes (placeholder)
