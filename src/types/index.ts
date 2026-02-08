@@ -2,7 +2,28 @@
 // CardCommand Center - Type Definitions
 // ============================================
 
-import { Category } from '@prisma/client';
+import { Request } from 'express';
+import { User, Plan, Category, Liquidity, Sentiment } from '@prisma/client';
+
+// ============================================
+// Express Extensions
+// ============================================
+
+declare global {
+  namespace Express {
+    interface Request {
+      user?: User;
+    }
+  }
+}
+
+// ============================================
+// Authenticated Request Type
+// ============================================
+
+export interface AuthenticatedRequest extends Request {
+  user: User;
+}
 
 // ============================================
 // API Response Types
@@ -164,5 +185,8 @@ export interface StrategyFactor {
   detail: string;
 }
 
-// Re-export Prisma types
-export { Category } from '@prisma/client';
+// ============================================
+// Re-exports from Prisma
+// ============================================
+
+export { User, Plan, Category, Liquidity, Sentiment };
