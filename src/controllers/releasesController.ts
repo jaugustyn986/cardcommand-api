@@ -4,7 +4,6 @@
 
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { AuthenticatedRequest } from '../types';
 
 const prisma = new PrismaClient();
 
@@ -142,7 +141,7 @@ export const getRelease = async (req: Request, res: Response) => {
 };
 
 // ============================================
-// Create Release (Admin only - placeholder)
+// Create Release (Admin only)
 // ============================================
 
 export const createRelease = async (req: Request, res: Response) => {
@@ -179,102 +178,17 @@ export const createRelease = async (req: Request, res: Response) => {
 };
 
 // ============================================
-// Set Release Reminder
+// Placeholder reminder functions (will implement later)
 // ============================================
 
-export const setReminder = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required'
-      });
-    }
-
-    // Check if release exists
-    const release = await prisma.release.findUnique({
-      where: { id }
-    });
-
-    if (!release) {
-      return res.status(404).json({
-        success: false,
-        error: 'Release not found'
-      });
-    }
-
-    // Use raw query to create reminder
-    const reminder = await prisma.$queryRaw`
-      INSERT INTO "release_reminders" ("id", "user_id", "release_id", "created_at")
-      VALUES (gen_random_uuid(), ${userId}, ${id}, NOW())
-      ON CONFLICT ("user_id", "release_id") DO NOTHING
-      RETURNING *
-    `;
-
-    res.json({
-      success: true,
-      data: reminder
-    });
-  } catch (error) {
-    console.error('Error setting reminder:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to set reminder'
-    });
-  }
+export const setReminder = async (req: Request, res: Response) => {
+  res.json({ success: true, message: 'Reminder feature coming soon' });
 };
 
-// ============================================
-// Remove Release Reminder
-// ============================================
-
-export const removeReminder = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required'
-      });
-    }
-
-    // Use raw query to delete reminder
-    await prisma.$executeRaw`
-      DELETE FROM "release_reminders" 
-      WHERE "user_id" = ${userId} AND "release_id" = ${id}
-    `;
-
-    res.json({
-      success: true,
-      message: 'Reminder removed'
-    });
-  } catch (error) {
-    console.error('Error removing reminder:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to remove reminder'
-    });
-  }
+export const removeReminder = async (req: Request, res: Response) => {
+  res.json({ success: true, message: 'Reminder feature coming soon' });
 };
 
-// ============================================
-// Get User's Release Reminders
-// ============================================
-
-export const getReminders = async (req: AuthenticatedRequest, res: Response) => {
-  try {
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        error: 'Authentication required'
-      });
-    }
-
-    // Use raw query to
+export const getReminders = async (req: Request, res: Response) => {
+  res.json({ success: true, data: [] });
+};
