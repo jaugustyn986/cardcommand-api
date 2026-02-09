@@ -13,35 +13,42 @@ const prisma = new PrismaClient();
 
 export const getReleases = async (req: Request, res: Response) => {
   try {
-    const { 
-      category, 
+    const {
+      category,
       upcoming,
+      all,
       sortBy = 'releaseDate',
       sortOrder = 'asc',
       page = '1',
-      perPage = '20'
+      perPage = '20',
     } = req.query;
 
-    const pageNum = parseInt(page as string, 10);
-    const perPageNum = parseInt(perPage as string, 10);
+    const pageNum = Math.max(1, parseInt(page as string, 10));
+    const perPageNum = Math.min(100, Math.max(1, parseInt(perPage as string, 10)));
     const skip = (pageNum - 1) * perPageNum;
 
-    // Build where clause
-    const where: any = {};
-    
-    if (category) {
+    const where: Record<string, unknown> = {};
+
+    if (category && typeof category === 'string') {
       where.category = category;
     }
-    
-    if (upcoming === 'true') {
-      where.releaseDate = {
-        gte: new Date()
-      };
+
+    // Default: show releases from 1 month ago through 3 months from now
+    if (all === 'true') {
+      // No date filter
+    } else if (upcoming === 'true') {
+      where.releaseDate = { gte: new Date() };
+    } else {
+      const now = new Date();
+      const from = new Date(now);
+      from.setMonth(from.getMonth() - 1);
+      const to = new Date(now);
+      to.setMonth(to.getMonth() + 3);
+      where.releaseDate = { gte: from, lte: to };
     }
 
-    // Build order by
-    const orderBy: any = {};
-    orderBy[sortBy as string] = sortOrder;
+    const orderBy: Record<string, string> = {};
+    orderBy[sortBy as string] = sortOrder as string;
 
     // Get releases with count
     const [releases, totalCount] = await Promise.all([

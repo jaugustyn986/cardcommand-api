@@ -421,6 +421,11 @@ curl https://cardcommand-api-production.up.railway.app/api/admin/releases/status
 # - Filter by category (e.g. Pokemon, MTG) and confirm recent sets appear with correct dates/hype scores
 ```
 
+#### Release images
+- **Pokemon TCG**: Sync sets `imageUrl` from the set’s `images.logo` when syncing from the Pokemon TCG API.
+- **Scryfall (MTG)**: Sync sets `imageUrl` from the set’s `icon_svg_uri` (SVG).
+- The Releases UI shows `imageUrl` when present; otherwise it uses a category placeholder. Run the release sync (see Test above) so new/updated sets get images.
+
 ### Validating Live Data in the Frontend
 
 ```bash
