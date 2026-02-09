@@ -10,6 +10,7 @@ import * as dealsController from '../controllers/dealsController';
 import * as portfolioController from '../controllers/portfolioController';
 import * as releasesController from '../controllers/releasesController';
 import * as trendingController from '../controllers/trendingController';
+import * as adminController from '../controllers/adminController';
 
 const router = Router();
 
@@ -74,5 +75,13 @@ router.get('/user/preferences', authenticateToken, (req, res) => {
 router.patch('/user/preferences', authenticateToken, validate(schemas.updatePreferences), (req, res) => {
   res.json({ success: true, data: req.body });
 });
+
+// ============================================
+// Admin Routes
+// ============================================
+
+router.post('/admin/releases/sync', authenticateToken, adminController.triggerReleaseSync);
+router.get('/admin/releases/status', authenticateToken, adminController.getSyncStatus);
+router.get('/admin/health', adminController.getApiHealth);
 
 export default router;
