@@ -14,22 +14,19 @@ const prisma = new PrismaClient();
 export const getTrending = async (req: Request, res: Response) => {
   try {
     const { category, limit = '10' } = req.query;
-    const limitNum = parseInt(limit as string, 10);
+    const limitNum = Math.min(parseInt(limit as string, 10) || 10, 100);
 
-    // Build where clause
-    const where: any = {};
-    if (category) {
+    const where: Record<string, unknown> = {};
+    if (category && typeof category === 'string') {
       where.category = category;
     }
 
-    // Get trending items from database
     const trendingItems = await prisma.trendingItem.findMany({
       where,
       orderBy: { calculatedAt: 'desc' },
       take: limitNum,
     });
 
-    // Transform for response
     const transformedItems = trendingItems.map(item => ({
       id: item.id,
       cardName: item.cardName,
@@ -47,13 +44,14 @@ export const getTrending = async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      data: transformedItems
+      data: transformedItems,
     });
   } catch (error) {
     console.error('Error fetching trending:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch trending items'
+    // Return empty data so frontend can still render (e.g. table missing or empty)
+    res.status(200).json({
+      success: true,
+      data: [],
     });
   }
 };
@@ -63,9 +61,26 @@ export const getTrending = async (req: Request, res: Response) => {
 // ============================================
 
 export const getHeatmap = async (req: Request, res: Response) => {
+  const emptyHeatmap = () =>
+    res.json({
+      success: true,
+      data: {
+        categories: ['Baseball', 'Basketball', 'Football', 'TCG'],
+        priceRanges: ['$0-50', '$50-250', '$250-1K', '$1K+'],
+        bubbles: [],
+      },
+    });
+
   try {
-    // Get aggregated data for heatmap bubbles
-    const heatmapData = await prisma.$queryRaw`
+    const heatmapData = await prisma.$queryRaw<
+      Array<{
+        category: string;
+        price_range: string;
+        avg_volume: number | null;
+        card_count: bigint;
+        avg_change: number | null;
+      }>
+    >`
       SELECT 
         category,
         CASE 
@@ -82,15 +97,13 @@ export const getHeatmap = async (req: Request, res: Response) => {
       GROUP BY category, price_range
     `;
 
-    // Transform to bubble format
-    const bubbles = (heatmapData as any[]).map(row => ({
+    const bubbles = heatmapData.map(row => ({
       category: row.category,
       priceRange: row.price_range,
-      volume: Math.round(row.avg_volume),
-      count: parseInt(row.card_count),
-      change: Number(row.avg_change),
-      // Size: 1=small (low), 2=medium, 3=large (high)
-      size: row.avg_volume > 200 ? 3 : row.avg_volume > 100 ? 2 : 1
+      volume: Math.round(Number(row.avg_volume) || 0),
+      count: Number(row.card_count) || 0,
+      change: Number(row.avg_change) || 0,
+      size: (row.avg_volume ?? 0) > 200 ? 3 : (row.avg_volume ?? 0) > 100 ? 2 : 1,
     }));
 
     res.json({
@@ -98,14 +111,11 @@ export const getHeatmap = async (req: Request, res: Response) => {
       data: {
         categories: ['Baseball', 'Basketball', 'Football', 'TCG'],
         priceRanges: ['$0-50', '$50-250', '$250-1K', '$1K+'],
-        bubbles
-      }
+        bubbles,
+      },
     });
   } catch (error) {
     console.error('Error fetching heatmap:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch heatmap data'
-    });
+    return emptyHeatmap();
   }
 };
