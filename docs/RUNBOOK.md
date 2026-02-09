@@ -414,7 +414,34 @@ curl -X POST https://cardcommand-api-production.up.railway.app/api/admin/release
 
 # Check status
 curl https://cardcommand-api-production.up.railway.app/api/admin/releases/status
+
+# Verify data in app
+# - Open frontend: https://cardcommand-frontend.vercel.app
+# - Switch to Releases tab
+# - Filter by category (e.g. Pokemon, MTG) and confirm recent sets appear with correct dates/hype scores
 ```
+
+### Validating Live Data in the Frontend
+
+```bash
+# Deals
+curl https://cardcommand-api-production.up.railway.app/api/deals
+
+# Portfolio (requires auth)
+curl https://cardcommand-api-production.up.railway.app/api/portfolio \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Trending + Heatmap
+curl https://cardcommand-api-production.up.railway.app/api/trending
+curl https://cardcommand-api-production.up.railway.app/api/trending/heatmap
+```
+
+- Open `https://cardcommand-frontend.vercel.app`
+- Verify:
+  - Deals tab shows live deals and no longer uses purely mock data
+  - Portfolio tab prompts unauthenticated users to sign in and shows live items once authenticated
+  - Trending tab shows live cards when available and falls back to sample data otherwise
+  - Releases tab is populated from synced Pokemon/Scryfall data
 
 ### Scryfall API (MTG)
 

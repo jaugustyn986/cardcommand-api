@@ -18,31 +18,31 @@ export async function getDeals(
 
     const where: Record<string, unknown> = { isActive: true };
 
-    const total = await prisma.deal.count({ where }).catch(() => 0);
+    const totalCount = await prisma.deal.count({ where }).catch(() => 0);
 
     const deals = await prisma.deal.findMany({
       where,
       orderBy: { createdAt: 'desc' },
-      skip: (page - 1) * perPage,
+        skip: (page - 1) * perPage,
       take: perPage,
     }).catch(() => []);
 
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: deals,
-      meta: {
-        total,
+      pagination: {
         page,
         perPage,
-        totalPages: Math.ceil(total / perPage) || 1,
-      }
+        totalCount,
+        totalPages: Math.ceil(totalCount / perPage) || 1,
+      },
     });
   } catch (error) {
     console.error('Get deals error:', error);
-    res.json({ 
-      success: true, 
+    res.json({
+      success: true,
       data: [],
-      meta: { total: 0, page: 1, perPage: 20, totalPages: 1 }
+      pagination: { page: 1, perPage: 20, totalCount: 0, totalPages: 1 },
     });
   }
 }

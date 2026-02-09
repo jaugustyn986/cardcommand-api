@@ -22,41 +22,9 @@ export async function getPortfolio(
       orderBy: { createdAt: 'desc' },
     });
 
-    // Calculate portfolio stats
-    const stats = portfolio.reduce((acc, item) => {
-      const currentValue = Number(item.currentValue);
-      const purchasePrice = Number(item.purchasePrice);
-      const quantity = item.quantity;
-      
-      acc.totalValue += currentValue * quantity;
-      acc.totalCost += purchasePrice * quantity;
-      acc.totalCards += quantity;
-      if (item.inGradingQueue) {
-        acc.gradingQueue += quantity;
-      }
-      return acc;
-    }, {
-      totalValue: 0,
-      totalCost: 0,
-      totalCards: 0,
-      gradingQueue: 0,
-    });
-
-    const totalProfit = stats.totalValue - stats.totalCost;
-    const profitPercent = stats.totalCost > 0 
-      ? (totalProfit / stats.totalCost) * 100 
-      : 0;
-
     res.json({
       success: true,
-      data: {
-        items: portfolio,
-        stats: {
-          ...stats,
-          totalProfit,
-          profitPercent: Number(profitPercent.toFixed(2)),
-        },
-      },
+      data: portfolio,
     });
   } catch (error) {
     next(error);
