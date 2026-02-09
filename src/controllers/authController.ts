@@ -23,42 +23,60 @@ export async function register(req: Request, res: Response, next: NextFunction):
 
     const hashedPassword = await hashPassword(password);
 
+    // Create user first without nested preferences to avoid failures if user_preferences
+    // table is missing or schema is out of sync in production
     const user = await prisma.user.create({
       data: {
         email,
         password: hashedPassword,
-        name,
-        preferences: {
-          create: {
-            categories: [],
-            priceRangeMin: 0,
-            priceRangeMax: 10000,
-            grades: [],
-            graders: [],
-            dealAlertThreshold: 15,
-            notificationChannels: ['email'],
-          },
-        },
+        name: name || null,
       },
       include: { preferences: true },
     });
 
-    const token = generateToken(user);
+    // Optionally create default preferences; if it fails, user is still created
+    try {
+      await prisma.userPreferences.create({
+        data: {
+          userId: user.id,
+          categories: [],
+          priceRangeMin: 0,
+          priceRangeMax: 10000,
+          grades: [],
+          graders: [],
+          dealAlertThreshold: 15,
+          notificationChannels: ['email'],
+        },
+      });
+    } catch (prefErr) {
+      console.error('Failed to create default preferences for user', user.id, prefErr);
+      // Continue — preferences can be created when user updates settings
+    }
+
+    // Re-fetch user with preferences in case we just created them
+    const userWithPrefs = await prisma.user.findUnique({
+      where: { id: user.id },
+      include: { preferences: true },
+    });
+    const finalUser = userWithPrefs ?? user;
+
+    const token = generateToken(finalUser);
 
     res.status(201).json({
       success: true,
       data: {
         user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          plan: user.plan,
-          preferences: user.preferences,
+          id: finalUser.id,
+          email: finalUser.email,
+          name: finalUser.name,
+          plan: finalUser.plan,
+          preferences: finalUser.preferences,
         },
         token,
       },
     });
   } catch (error) {
+    console.error('Register error:', error);
     next(error);
   }
 }
