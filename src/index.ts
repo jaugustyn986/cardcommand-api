@@ -209,13 +209,23 @@ async function seedDatabase() {
 // Security headers
 app.use(helmet());
 
-// CORS - Allow Vercel frontend
+// CORS - Allow Vercel frontend and preview deployments
+const allowedOrigins = [
+  process.env.FRONTEND_URL || 'http://localhost:5173',
+  'https://cardcommand-frontend.vercel.app',
+];
 app.use(cors({
-  origin: [
-    process.env.FRONTEND_URL || 'http://localhost:5173',
-    'https://cardcommand-frontend.vercel.app',
-  ],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (e.g. same-origin, Postman)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // Allow Vercel preview deployments (*.vercel.app)
+    if (origin.endsWith('.vercel.app')) return callback(null, true);
+    callback(null, false);
+  },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // Request logging
