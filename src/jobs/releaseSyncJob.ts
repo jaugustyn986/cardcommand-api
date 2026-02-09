@@ -3,7 +3,7 @@
 // Scheduled job to sync releases from APIs
 // ============================================
 
-import { syncAllReleases } from '../services/releaseSyncService';
+import { syncAllReleases } from '../releaseSyncService';
 
 let isRunning = false;
 

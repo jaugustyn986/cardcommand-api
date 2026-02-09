@@ -5,7 +5,7 @@
 
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { syncAllReleases } from '../services/releaseSyncService';
+import { syncAllReleases } from '../releaseSyncService';
 
 const prisma = new PrismaClient();
 

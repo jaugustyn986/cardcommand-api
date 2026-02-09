@@ -3,7 +3,7 @@
 // Run: npx ts-node src/scripts/syncReleases.ts
 // ============================================
 
-import { syncAllReleases } from '../services/releaseSyncService';
+import { syncAllReleases } from '../releaseSyncService';
 
 async function main() {
   console.log('🚀 Starting manual release sync...\n');
