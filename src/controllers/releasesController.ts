@@ -15,8 +15,11 @@ export const getReleases = async (req: Request, res: Response) => {
   try {
     const {
       category,
+      categories,
       upcoming,
       all,
+      fromDate,
+      toDate,
       sortBy = 'releaseDate',
       sortOrder = 'asc',
       page = '1',
@@ -29,22 +32,53 @@ export const getReleases = async (req: Request, res: Response) => {
 
     const where: Record<string, unknown> = {};
 
-    if (category && typeof category === 'string') {
+    // Category filters
+    if (categories && typeof categories === 'string' && categories.trim().length > 0) {
+      // Multi-select: categories=pokemon,mtg
+      const categoryList = categories
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (categoryList.length > 0) {
+        where.category = { in: categoryList };
+      }
+    } else if (category && typeof category === 'string') {
+      // Backwards-compatible single-category filter
       where.category = category;
     }
 
-    // Default: show releases from 1 month ago through 3 months from now
-    if (all === 'true') {
-      // No date filter
-    } else if (upcoming === 'true') {
-      where.releaseDate = { gte: new Date() };
+    // Date range filters
+    if (fromDate || toDate) {
+      const range: { gte?: Date; lte?: Date } = {};
+      if (fromDate && typeof fromDate === 'string') {
+        const parsed = new Date(fromDate);
+        if (!isNaN(parsed.getTime())) {
+          range.gte = parsed;
+        }
+      }
+      if (toDate && typeof toDate === 'string') {
+        const parsed = new Date(toDate);
+        if (!isNaN(parsed.getTime())) {
+          range.lte = parsed;
+        }
+      }
+      if (range.gte || range.lte) {
+        where.releaseDate = range;
+      }
     } else {
-      const now = new Date();
-      const from = new Date(now);
-      from.setMonth(from.getMonth() - 1);
-      const to = new Date(now);
-      to.setMonth(to.getMonth() + 3);
-      where.releaseDate = { gte: from, lte: to };
+      // Default: show releases from 1 month ago through 3 months from now
+      if (all === 'true') {
+        // No date filter
+      } else if (upcoming === 'true') {
+        where.releaseDate = { gte: new Date() };
+      } else {
+        const now = new Date();
+        const from = new Date(now);
+        from.setMonth(from.getMonth() - 1);
+        const to = new Date(now);
+        to.setMonth(to.getMonth() + 3);
+        where.releaseDate = { gte: from, lte: to };
+      }
     }
 
     const orderBy: Record<string, string> = {};
