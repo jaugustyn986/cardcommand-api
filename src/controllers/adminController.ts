@@ -6,6 +6,7 @@
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { syncAllReleases } from '../releaseSyncService';
+import { scrapeAndUpsertReleaseProducts } from '../releaseScrapeService';
 
 const prisma = new PrismaClient();
 
@@ -16,13 +17,25 @@ const prisma = new PrismaClient();
 export async function triggerReleaseSync(req: Request, res: Response) {
   try {
     console.log('🔄 Manual release sync triggered by admin');
-    
+
     const results = await syncAllReleases();
-    
+
+    // After API sync, run Tier B pipeline (scrape + AI extraction) to enrich release products
+    let scrapeResult: { sources: number; productsUpserted: number; changesDetected: number } | undefined;
+    try {
+      scrapeResult = await scrapeAndUpsertReleaseProducts();
+      console.log(`✅ Scrape complete: ${scrapeResult.productsUpserted} products upserted, ${scrapeResult.changesDetected} changes from ${scrapeResult.sources} source(s)`);
+    } catch (scrapeErr) {
+      console.error('⚠️ Scrape step failed (releases still synced):', scrapeErr);
+    }
+
     res.json({
       success: true,
       message: 'Release sync completed',
-      data: results,
+      data: {
+        ...results,
+        scrape: scrapeResult,
+      },
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

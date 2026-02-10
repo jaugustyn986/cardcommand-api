@@ -465,6 +465,42 @@ curl https://api.scryfall.com/sets
 curl https://cardcommand-api-production.up.railway.app/api/admin/health
 ```
 
+### Release scrape (OpenAI) – product-level data
+
+After each **Sync releases** run, the backend can scrape curated pages (e.g. IGN Pokémon TCG 2026) and use OpenAI to extract product-level rows (ETBs, booster boxes, tins, etc.) into `release_products`. This step is optional.
+
+#### Get API key
+```
+1. Go to https://platform.openai.com/api-keys
+2. Create an API key
+3. Add to Railway (or .env): OPENAI_API_KEY="sk-..."
+```
+
+#### Configure
+```bash
+# Backend .env or Railway variables
+OPENAI_API_KEY="sk-..."                    # Required for scrape step
+OPENAI_EXTRACTION_MODEL="gpt-4o-mini"      # Optional; default gpt-4o-mini
+```
+
+If `OPENAI_API_KEY` is not set, the scrape step is skipped and sync still completes using Pokemon/MTG APIs only.
+
+#### Whitelisted sources (in code)
+- IGN Pokémon TCG 2026 release schedule  
+- Pokémon.com TCG expansions page  
+Additional Tier B sources: `src/releaseIntelSources.ts` (`RELEASE_INTEL_SOURCES`).
+
+### Release intel pipeline (Phase 1)
+
+- **Source registry:** `src/releaseIntelSources.ts` – Tier A (APIs), Tier B (fetch + AI extract). Tier B runs after each “Sync releases.”
+- **Change log:** When a product’s `releaseDate`, `preorderDate`, `msrp`, or `estimatedResale` changes, a row is written to `release_product_changes`.
+- **APIs:**
+  - `GET /api/releases/products?confidence=confirmed` – optional filter by confidence.
+  - `GET /api/releases/changes?limit=50&since=ISO_DATE` – recent changes for “what changed” UX.
+- **Schema:** `ReleaseProduct` has `sourceTier`, `sourceUrl`, `confidence`; new table `release_product_changes` stores field-level diffs. Run `npx prisma db push` (or migrate) after pulling.
+
+---
+
 ### eBay API (Future)
 
 #### Get Credentials

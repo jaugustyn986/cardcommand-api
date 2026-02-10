@@ -3,7 +3,7 @@
 // ============================================
 
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Confidence } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
@@ -144,6 +144,7 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
       categories,
       fromDate,
       toDate,
+      confidence: confidenceParam,
       sortBy = 'releaseDate',
       sortOrder = 'asc',
       page = '1',
@@ -155,6 +156,11 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
     const skip = (pageNum - 1) * perPageNum;
 
     const where: Record<string, unknown> = {};
+
+    // Confidence filter (confirmed | unconfirmed | rumor); omit = return all
+    if (confidenceParam && typeof confidenceParam === 'string' && ['confirmed', 'unconfirmed', 'rumor'].includes(confidenceParam)) {
+      where.confidence = confidenceParam as Confidence;
+    }
 
     // Category filters (multi-select first, then single for backward compatibility)
     if (categories && typeof categories === 'string' && categories.trim().length > 0) {
@@ -219,6 +225,8 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
       contentsSummary: product.contentsSummary ?? undefined,
       setName: product.release.name,
       setHypeScore: product.release.hypeScore ? Number(product.release.hypeScore) : undefined,
+      confidence: product.confidence,
+      sourceUrl: product.sourceUrl ?? undefined,
     }));
 
     res.json({
@@ -236,6 +244,58 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch release products',
+    });
+  }
+};
+
+// ============================================
+// Get Release Product Changes (date/price changes for "what changed" UX)
+// ============================================
+
+export const getReleaseChanges = async (req: Request, res: Response) => {
+  try {
+    const { limit = '50', since } = req.query;
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10)));
+    const sinceDate = since && typeof since === 'string' ? new Date(since) : undefined;
+
+    const where: { detectedAt?: { gte: Date } } = {};
+    if (sinceDate && !isNaN(sinceDate.getTime())) {
+      where.detectedAt = { gte: sinceDate };
+    }
+
+    const changes = await prisma.releaseProductChange.findMany({
+      where,
+      orderBy: { detectedAt: 'desc' },
+      take: limitNum,
+      include: {
+        releaseProduct: {
+          include: { release: true },
+        },
+      },
+    });
+
+    const data = changes.map((c) => ({
+      id: c.id,
+      field: c.field,
+      oldValue: c.oldValue,
+      newValue: c.newValue,
+      detectedAt: c.detectedAt.toISOString(),
+      sourceUrl: c.sourceUrl ?? undefined,
+      productName: c.releaseProduct.name,
+      productId: c.releaseProduct.id,
+      setName: c.releaseProduct.release.name,
+      category: c.releaseProduct.category,
+    }));
+
+    res.json({
+      success: true,
+      data,
+    });
+  } catch (error) {
+    console.error('Error fetching release changes:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch release changes',
     });
   }
 };

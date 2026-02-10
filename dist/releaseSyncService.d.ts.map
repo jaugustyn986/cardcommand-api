@@ -1,0 +1,1 @@
+{"version":3,"file":"releaseSyncService.d.ts","sourceRoot":"","sources":["../src/releaseSyncService.ts"],"names":[],"mappings":"AAmCA,wBAAsB,mBAAmB,IAAI,OAAO,CAAC,MAAM,CAAC,CAqE3D;AA8BD,wBAAsB,eAAe,IAAI,OAAO,CAAC,MAAM,CAAC,CAoEvD;AA+ED,wBAAsB,eAAe,IAAI,OAAO,CAAC;IAAE,OAAO,EAAE,MAAM,CAAC;IAAC,GAAG,EAAE,MAAM,CAAA;CAAE,CAAC,CAOjF"}

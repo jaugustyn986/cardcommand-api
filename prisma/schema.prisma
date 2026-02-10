@@ -47,6 +47,19 @@ enum UserStatus {
   suspended
 }
 
+// Release intel pipeline: source tier and confidence
+enum SourceTier {
+  A   // No-scrape: APIs, feeds, stable structured pages
+  B   // Light fetch + parse: allowed HTML pages
+  C   // Manual/curated or rumor (promote when second source agrees)
+}
+
+enum Confidence {
+  confirmed
+  unconfirmed
+  rumor
+}
+
 // ============================================
 // Models
 // ============================================
@@ -182,26 +195,47 @@ model Release {
 }
 
 model ReleaseProduct {
-  id               String    @id @default(uuid())
-  releaseId        String    @map("release_id")
+  id               String      @id @default(uuid())
+  releaseId        String      @map("release_id")
   name             String
-  productType      String    @map("product_type")
+  productType      String      @map("product_type")
   category         Category
-  msrp             Float?    @map("msrp")
-  estimatedResale  Float?    @map("estimated_resale")
-  releaseDate      DateTime? @map("release_date")
-  preorderDate     DateTime? @map("preorder_date")
-  imageUrl         String?   @map("image_url")
-  buyUrl           String?   @map("buy_url")
-  contentsSummary  String?   @map("contents_summary")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
+  msrp             Float?      @map("msrp")
+  estimatedResale  Float?      @map("estimated_resale")
+  releaseDate      DateTime?   @map("release_date")
+  preorderDate     DateTime?   @map("preorder_date")
+  imageUrl         String?     @map("image_url")
+  buyUrl           String?     @map("buy_url")
+  contentsSummary  String?     @map("contents_summary")
+  sourceTier       SourceTier? @map("source_tier")
+  sourceUrl        String?     @map("source_url")
+  confidence       Confidence  @default(confirmed)
+  createdAt        DateTime    @default(now()) @map("created_at")
+  updatedAt        DateTime    @updatedAt @map("updated_at")
 
-  release          Release   @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  release          Release     @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+  changes          ReleaseProductChange[]
 
   @@map("release_products")
   @@index([category])
   @@index([releaseDate])
+  @@index([confidence])
+}
+
+model ReleaseProductChange {
+  id               String        @id @default(uuid())
+  releaseProductId String        @map("release_product_id")
+  field            String
+  oldValue         String?       @map("old_value")
+  newValue         String?       @map("new_value")
+  detectedAt       DateTime     @default(now()) @map("detected_at")
+  sourceUrl        String?       @map("source_url")
+
+  releaseProduct   ReleaseProduct @relation(fields: [releaseProductId], references: [id], onDelete: Cascade)
+
+  @@map("release_product_changes")
+  @@index([releaseProductId])
+  @@index([detectedAt])
 }
 
 model TrendingItem {
