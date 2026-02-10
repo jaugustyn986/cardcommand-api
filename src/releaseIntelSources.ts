@@ -60,7 +60,33 @@ export const RELEASE_INTEL_SOURCES: ReleaseIntelSource[] = [
     enabled: true,
     schedule: 'daily',
   },
-  // Future: Pokémon press schedule, Pokémon Center preorder dates, Bulbapedia, PokéBeach
+  {
+    id: 'pokemon-press-schedule',
+    name: 'Pokémon Press TCG Schedule',
+    url: 'https://press.pokemon.com/en/Items/Schedule/Pokemon-Trading-Card-Game',
+    tier: 'B',
+    category: 'pokemon',
+    enabled: true,
+    schedule: 'daily',
+  },
+  {
+    id: 'bulbapedia-expansions',
+    name: 'Bulbapedia TCG Expansions',
+    url: 'https://bulbapedia.bulbagarden.net/wiki/List_of_Pok%C3%A9mon_Trading_Card_Game_expansions',
+    tier: 'B',
+    category: 'pokemon',
+    enabled: true,
+    schedule: 'daily',
+  },
+  {
+    id: 'pokebeach-news',
+    name: 'PokéBeach (news / early intel)',
+    url: 'https://pokebeach.com/',
+    tier: 'C',
+    category: 'pokemon',
+    enabled: true,
+    schedule: 'daily',
+  },
 ];
 
 export function getSourcesByTier(tier: SourceTierType): ReleaseIntelSource[] {
@@ -69,4 +95,13 @@ export function getSourcesByTier(tier: SourceTierType): ReleaseIntelSource[] {
 
 export function getTierBSources(): ReleaseIntelSource[] {
   return getSourcesByTier('B');
+}
+
+export function getTierCSources(): ReleaseIntelSource[] {
+  return getSourcesByTier('C');
+}
+
+/** All scrape sources (B + C) for the pipeline; C products get confidence rumor */
+export function getScrapeSources(): ReleaseIntelSource[] {
+  return RELEASE_INTEL_SOURCES.filter((s) => s.enabled && (s.tier === 'B' || s.tier === 'C'));
 }

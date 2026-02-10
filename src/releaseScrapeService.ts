@@ -5,9 +5,12 @@
 
 import { PrismaClient, Category, SourceTier, Confidence } from '@prisma/client';
 import axios from 'axios';
-import { getTierBSources, type SourceTierType } from './releaseIntelSources';
+import { getScrapeSources, type SourceTierType } from './releaseIntelSources';
 
 const prisma = new PrismaClient();
+
+const USER_AGENT = 'Mozilla/5.0 (compatible; CardCommandBot/1.0; +https://cardcommand.vercel.app)';
+const RATE_LIMIT_MS = 1500;
 
 // ============================================
 // Extraction types (AI returns this shape)
@@ -35,7 +38,77 @@ export interface ExtractedPayload {
   releases: ExtractedSet[];
 }
 
-// Tier B sources come from releaseIntelSources (getTierBSources())
+// ============================================
+// robots.txt check (compliance: skip if disallowed)
+// ============================================
+
+function getOrigin(url: string): string {
+  try {
+    const u = new URL(url);
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return '';
+  }
+}
+
+function getPath(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.pathname || '/';
+  } catch {
+    return '/';
+  }
+}
+
+/** Returns true if we are allowed to fetch this URL per robots.txt; false = skip. */
+async function allowedByRobotsTxt(url: string): Promise<boolean> {
+  const origin = getOrigin(url);
+  const path = getPath(url);
+  if (!origin) return false;
+
+  const robotsUrl = `${origin}/robots.txt`;
+  let robotsBody: string;
+  try {
+    const { data } = await axios.get<string>(robotsUrl, {
+      timeout: 8000,
+      responseType: 'text',
+      headers: { 'User-Agent': USER_AGENT },
+      validateStatus: (s) => s === 200 || s === 404,
+    });
+    robotsBody = typeof data === 'string' ? data : '';
+  } catch {
+    return true; // If we can't fetch robots.txt, allow (fail open)
+  }
+
+  if (!robotsBody || robotsBody.trim().length === 0) return true;
+
+  const lines = robotsBody.split(/\r?\n/);
+  let inStarBlock = false;
+  const disallows: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (/^User-agent:\s*/i.test(trimmed)) {
+      const agent = trimmed.replace(/^User-agent:\s*/i, '').trim().toLowerCase();
+      inStarBlock = agent === '*';
+      if (inStarBlock) disallows.length = 0;
+    } else if (inStarBlock && /^Disallow:\s*/i.test(trimmed)) {
+      const pathRule = trimmed.replace(/^Disallow:\s*/i, '').trim();
+      if (pathRule.length > 0) disallows.push(pathRule);
+    }
+  }
+
+  for (const rule of disallows) {
+    if (rule === '/') return false;
+    const prefix = rule.replace(/\*$/, '');
+    if (path === rule || (prefix && path.startsWith(prefix))) return false;
+  }
+  return true;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 // ============================================
 // Fetch HTML (with a simple user-agent)
@@ -46,8 +119,7 @@ async function fetchHtml(url: string): Promise<string> {
     timeout: 15000,
     responseType: 'text',
     headers: {
-      'User-Agent':
-        'Mozilla/5.0 (compatible; CardCommandBot/1.0; +https://cardcommand.vercel.app)',
+      'User-Agent': USER_AGENT,
       Accept: 'text/html',
     },
     maxRedirects: 3,
@@ -261,7 +333,7 @@ async function upsertProductsForSet(
       contentsSummary: p.contentsSummary ?? null,
       sourceTier: tier,
       sourceUrl,
-      confidence: Confidence.confirmed,
+      confidence: sourceConfig.tier === 'C' ? Confidence.rumor : Confidence.confirmed,
     };
 
     if (existing) {
@@ -289,7 +361,7 @@ async function upsertProductsForSet(
 }
 
 // ============================================
-// Main: run Tier B pipeline (all registered Tier B sources)
+// Main: run Tier B + C pipeline (scrape sources with robots + rate limit)
 // ============================================
 
 export interface ScrapeResult {
@@ -299,13 +371,22 @@ export interface ScrapeResult {
 }
 
 export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
-  const sources = getTierBSources();
+  const sources = getScrapeSources();
   let totalProductsUpserted = 0;
   let totalChanges = 0;
 
-  for (const source of sources) {
+  for (let i = 0; i < sources.length; i++) {
+    const source = sources[i];
+    if (i > 0) await sleep(RATE_LIMIT_MS);
+
     try {
-      console.log(`🔄 [Tier B] ${source.name}...`);
+      const allowed = await allowedByRobotsTxt(source.url);
+      if (!allowed) {
+        console.log(`⏭️ Skipping ${source.name} (disallowed by robots.txt)`);
+        continue;
+      }
+
+      console.log(`🔄 [Tier ${source.tier}] ${source.name}...`);
       const html = await fetchHtml(source.url);
       const payload = await extractWithOpenAi(html, source.name);
 
