@@ -52,6 +52,7 @@ router.post('/portfolio/:id/grading-queue', authenticateToken, portfolioControll
 // ============================================
 
 router.get('/releases', optionalAuth, releasesController.getReleases);
+router.get('/releases/products', optionalAuth, releasesController.getReleaseProducts);
 router.get('/releases/:id', optionalAuth, releasesController.getRelease);
 router.post('/releases/:id/remind', authenticateToken, releasesController.setReminder);
 router.delete('/releases/:id/remind', authenticateToken, releasesController.removeReminder);

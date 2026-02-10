@@ -134,6 +134,113 @@ export const getReleases = async (req: Request, res: Response) => {
 };
 
 // ============================================
+// Get Release Products (boxes, tins, etc.)
+// ============================================
+
+export const getReleaseProducts = async (req: Request, res: Response) => {
+  try {
+    const {
+      category,
+      categories,
+      fromDate,
+      toDate,
+      sortBy = 'releaseDate',
+      sortOrder = 'asc',
+      page = '1',
+      perPage = '20',
+    } = req.query;
+
+    const pageNum = Math.max(1, parseInt(page as string, 10));
+    const perPageNum = Math.min(100, Math.max(1, parseInt(perPage as string, 10)));
+    const skip = (pageNum - 1) * perPageNum;
+
+    const where: Record<string, unknown> = {};
+
+    // Category filters (multi-select first, then single for backward compatibility)
+    if (categories && typeof categories === 'string' && categories.trim().length > 0) {
+      const categoryList = categories
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean);
+      if (categoryList.length > 0) {
+        where.category = { in: categoryList };
+      }
+    } else if (category && typeof category === 'string') {
+      where.category = category;
+    }
+
+    // Date range filters (optional)
+    if (fromDate || toDate) {
+      const range: { gte?: Date; lte?: Date } = {};
+      if (fromDate && typeof fromDate === 'string') {
+        const parsed = new Date(fromDate);
+        if (!isNaN(parsed.getTime())) {
+          range.gte = parsed;
+        }
+      }
+      if (toDate && typeof toDate === 'string') {
+        const parsed = new Date(toDate);
+        if (!isNaN(parsed.getTime())) {
+          range.lte = parsed;
+        }
+      }
+      if (range.gte || range.lte) {
+        where.releaseDate = range;
+      }
+    }
+
+    const orderBy: Record<string, string> = {};
+    orderBy[sortBy as string] = sortOrder as string;
+
+    const [products, totalCount] = await Promise.all([
+      prisma.releaseProduct.findMany({
+        where,
+        orderBy,
+        skip,
+        take: perPageNum,
+        include: {
+          release: true,
+        },
+      }),
+      prisma.releaseProduct.count({ where }),
+    ]);
+
+    const transformedProducts = products.map((product) => ({
+      id: product.id,
+      name: product.name,
+      productType: product.productType,
+      category: product.category,
+      msrp: product.msrp ?? undefined,
+      estimatedResale: product.estimatedResale ?? undefined,
+      releaseDate: product.releaseDate ? product.releaseDate.toISOString() : undefined,
+      preorderDate: product.preorderDate ? product.preorderDate.toISOString() : undefined,
+      imageUrl: product.imageUrl ?? product.release.imageUrl ?? undefined,
+      buyUrl: product.buyUrl ?? undefined,
+      contentsSummary: product.contentsSummary ?? undefined,
+      setName: product.release.name,
+      setHypeScore: product.release.hypeScore ? Number(product.release.hypeScore) : undefined,
+    }));
+
+    res.json({
+      success: true,
+      data: transformedProducts,
+      pagination: {
+        page: pageNum,
+        perPage: perPageNum,
+        totalCount,
+        totalPages: Math.ceil(totalCount / perPageNum),
+      },
+    });
+  } catch (error) {
+    console.error('Error fetching release products:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch release products',
+    });
+  }
+};
+
+// ============================================
 // Get Single Release
 // ============================================
 

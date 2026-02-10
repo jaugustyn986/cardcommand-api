@@ -3,7 +3,7 @@
 // Syncs release data from external APIs
 // ============================================
 
-import { PrismaClient, Category } from '@prisma/client';
+import { PrismaClient, Category, Release } from '@prisma/client';
 import axios from 'axios';
 
 const prisma = new PrismaClient();
@@ -64,7 +64,7 @@ export async function syncPokemonReleases(): Promise<number> {
 
       if (existingRelease) {
         // Update if needed
-        await prisma.release.update({
+        const updatedRelease = await prisma.release.update({
           where: { id: existingRelease.id },
           data: {
             releaseDate: releaseDate,
@@ -72,9 +72,10 @@ export async function syncPokemonReleases(): Promise<number> {
             updatedAt: new Date(),
           },
         });
+        await ensureDefaultReleaseProduct(updatedRelease);
       } else {
         // Create new release
-        await prisma.release.create({
+        const newRelease = await prisma.release.create({
           data: {
             name: `${set.name} (${set.series})`,
             releaseDate: releaseDate,
@@ -90,6 +91,7 @@ export async function syncPokemonReleases(): Promise<number> {
             isReleased: releaseDate <= new Date(),
           },
         });
+        await ensureDefaultReleaseProduct(newRelease);
         syncedCount++;
       }
     }
@@ -161,7 +163,7 @@ export async function syncMTGReleases(): Promise<number> {
       });
 
       if (existingRelease) {
-        await prisma.release.update({
+        const updatedRelease = await prisma.release.update({
           where: { id: existingRelease.id },
           data: {
             releaseDate: releaseDate,
@@ -169,8 +171,9 @@ export async function syncMTGReleases(): Promise<number> {
             updatedAt: new Date(),
           },
         });
+        await ensureDefaultReleaseProduct(updatedRelease);
       } else {
-        await prisma.release.create({
+        const newRelease = await prisma.release.create({
           data: {
             name: set.name,
             releaseDate: releaseDate,
@@ -186,6 +189,7 @@ export async function syncMTGReleases(): Promise<number> {
             isReleased: releaseDate <= new Date(),
           },
         });
+        await ensureDefaultReleaseProduct(newRelease);
         syncedCount++;
       }
     }
@@ -282,4 +286,33 @@ export async function syncAllReleases(): Promise<{ pokemon: number; mtg: number 
   ]);
   
   return { pokemon, mtg };
+}
+
+// ============================================
+// Release Product helpers
+// ============================================
+
+async function ensureDefaultReleaseProduct(release: Release): Promise<void> {
+  // Ensure every Release has at least one associated product for the UI
+  const existing = await prisma.releaseProduct.findFirst({
+    where: { releaseId: release.id },
+  });
+
+  if (existing) return;
+
+  await prisma.releaseProduct.create({
+    data: {
+      releaseId: release.id,
+      name: `${release.name} - Booster Product`,
+      productType: 'set_default',
+      category: release.category,
+      msrp: release.msrp,
+      estimatedResale: release.estimatedResale ?? null,
+      releaseDate: release.releaseDate,
+      preorderDate: null,
+      imageUrl: release.imageUrl,
+      buyUrl: null,
+      contentsSummary: release.description,
+    },
+  });
 }

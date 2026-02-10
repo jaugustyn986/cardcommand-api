@@ -176,7 +176,32 @@ model Release {
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")
 
+  products        ReleaseProduct[]
+
   @@map("releases")
+}
+
+model ReleaseProduct {
+  id               String    @id @default(uuid())
+  releaseId        String    @map("release_id")
+  name             String
+  productType      String    @map("product_type")
+  category         Category
+  msrp             Float?    @map("msrp")
+  estimatedResale  Float?    @map("estimated_resale")
+  releaseDate      DateTime? @map("release_date")
+  preorderDate     DateTime? @map("preorder_date")
+  imageUrl         String?   @map("image_url")
+  buyUrl           String?   @map("buy_url")
+  contentsSummary  String?   @map("contents_summary")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  release          Release   @relation(fields: [releaseId], references: [id], onDelete: Cascade)
+
+  @@map("release_products")
+  @@index([category])
+  @@index([releaseDate])
 }
 
 model TrendingItem {
