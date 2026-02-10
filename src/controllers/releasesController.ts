@@ -198,18 +198,29 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
     const orderBy: Record<string, string> = {};
     orderBy[sortBy as string] = sortOrder as string;
 
-    const [products, totalCount] = await Promise.all([
-      prisma.releaseProduct.findMany({
-        where,
-        orderBy,
-        skip,
-        take: perPageNum,
-        include: {
-          release: true,
-        },
-      }),
-      prisma.releaseProduct.count({ where }),
-    ]);
+    // Fetch enough to dedupe by logical product (same category + set name + product name)
+    const fetchLimit = Math.min(500, perPageNum * 10);
+    const allProducts = await prisma.releaseProduct.findMany({
+      where,
+      orderBy,
+      take: fetchLimit,
+      include: {
+        release: true,
+      },
+    });
+
+    // One card per (category, setName, productName); prefer Tier B (sourceUrl) over set_default
+    const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    const seen = new Map<string, (typeof allProducts)[0]>();
+    for (const p of allProducts) {
+      const key = `${p.category}|${normalize(p.release.name)}|${normalize(p.name)}`;
+      const existing = seen.get(key);
+      const preferThis = !existing || (p.sourceUrl != null && existing.productType === 'set_default');
+      if (preferThis) seen.set(key, p);
+    }
+    const deduped = Array.from(seen.values());
+    const totalCount = deduped.length;
+    const products = deduped.slice(skip, skip + perPageNum);
 
     const transformedProducts = products.map((product) => ({
       id: product.id,
