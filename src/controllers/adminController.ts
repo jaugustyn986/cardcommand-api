@@ -5,7 +5,7 @@
 
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { syncAllReleases } from '../releaseSyncService';
+import { syncAllReleases, backfillTierALinks } from '../releaseSyncService';
 import { scrapeAndUpsertReleaseProducts } from '../releaseScrapeService';
 import { backfillStrategiesForPokemon } from '../releaseStrategyService';
 
@@ -20,6 +20,14 @@ export async function triggerReleaseSync(req: Request, res: Response) {
     console.log('🔄 Manual release sync triggered by admin');
 
     const results = await syncAllReleases();
+
+    // Backfill buyUrl, sourceUrl, estimatedResale for set_default products missing them (catches pre-deploy data)
+    let tierALinksBackfilled = 0;
+    try {
+      tierALinksBackfilled = await backfillTierALinks();
+    } catch (err) {
+      console.error('⚠️ Tier A links backfill failed:', err);
+    }
 
     // After API sync, run Tier B pipeline (scrape + AI extraction) to enrich release products
     let scrapeResult: { sources: number; productsUpserted: number; changesDetected: number; strategiesGenerated?: number } | undefined;
@@ -43,6 +51,7 @@ export async function triggerReleaseSync(req: Request, res: Response) {
       message: 'Release sync completed',
       data: {
         ...results,
+        tierALinksBackfilled,
         scrape: scrapeResult,
         strategiesBackfilled,
       },

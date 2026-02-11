@@ -54,10 +54,11 @@ export async function syncPokemonReleases(): Promise<number> {
       
       if (releaseDate < oneYearAgo) continue;
 
-      // Check if release already exists
+      // Check if release already exists (we store name as "Name (Series)" so match both)
+      const possibleNames = [set.name, `${set.name} (${set.series})`];
       const existingRelease = await prisma.release.findFirst({
         where: {
-          name: set.name,
+          name: { in: possibleNames },
           category: 'pokemon',
         },
       });
@@ -380,5 +381,50 @@ async function ensureDefaultReleaseProduct(
       ...productData,
     },
   });
+}
+
+/** Backfill buyUrl, sourceUrl, estimatedResale for set_default products that are missing them */
+export async function backfillTierALinks(): Promise<number> {
+  const products = await prisma.releaseProduct.findMany({
+    where: {
+      productType: 'set_default',
+      OR: [{ buyUrl: null }, { sourceUrl: null }, { estimatedResale: null }],
+    },
+    include: { release: true },
+  });
+
+  let updated = 0;
+  for (const p of products) {
+    const q = encodeURIComponent(p.release.name);
+    const buyUrl =
+      p.release.category === 'pokemon'
+        ? `https://www.tcgplayer.com/search/pokemon/product?q=${q}`
+        : p.release.category === 'mtg'
+          ? `https://www.tcgplayer.com/search/magic/product?q=${q}`
+          : null;
+    const sourceUrl =
+      p.release.category === 'pokemon'
+        ? 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions'
+        : p.release.category === 'mtg'
+          ? 'https://scryfall.com/sets'
+          : null;
+    const estimatedResale =
+      p.msrp != null ? Math.round(p.msrp * 1.08 * 100) / 100 : null;
+
+    await prisma.releaseProduct.update({
+      where: { id: p.id },
+      data: {
+        buyUrl: buyUrl ?? p.buyUrl,
+        sourceUrl: sourceUrl ?? p.sourceUrl,
+        estimatedResale: estimatedResale ?? p.estimatedResale,
+        sourceTier: p.sourceTier ?? SourceTier.A,
+      },
+    });
+    updated++;
+  }
+  if (updated > 0) {
+    console.log(`✅ Tier A links backfill: updated ${updated} products`);
+  }
+  return updated;
 }
 
