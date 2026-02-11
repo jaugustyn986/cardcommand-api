@@ -206,6 +206,10 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
       take: fetchLimit,
       include: {
         release: true,
+        strategies: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
       },
     });
 
@@ -222,23 +226,35 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
     const totalCount = deduped.length;
     const products = deduped.slice(skip, skip + perPageNum);
 
-    const transformedProducts = products.map((product) => ({
-      id: product.id,
-      name: product.name,
-      productType: product.productType,
-      category: product.category,
-      msrp: product.msrp ?? undefined,
-      estimatedResale: product.estimatedResale ?? undefined,
-      releaseDate: product.releaseDate ? product.releaseDate.toISOString() : undefined,
-      preorderDate: product.preorderDate ? product.preorderDate.toISOString() : undefined,
-      imageUrl: product.imageUrl ?? product.release.imageUrl ?? undefined,
-      buyUrl: product.buyUrl ?? undefined,
-      contentsSummary: product.contentsSummary ?? undefined,
-      setName: product.release.name,
-      setHypeScore: product.release.hypeScore ? Number(product.release.hypeScore) : undefined,
-      confidence: product.confidence,
-      sourceUrl: product.sourceUrl ?? undefined,
-    }));
+    const transformedProducts = products.map((product) => {
+      const latestStrategy = product.strategies && product.strategies.length > 0 ? product.strategies[0] : null;
+
+      return {
+        id: product.id,
+        name: product.name,
+        productType: product.productType,
+        category: product.category,
+        msrp: product.msrp ?? undefined,
+        estimatedResale: product.estimatedResale ?? undefined,
+        releaseDate: product.releaseDate ? product.releaseDate.toISOString() : undefined,
+        preorderDate: product.preorderDate ? product.preorderDate.toISOString() : undefined,
+        imageUrl: product.imageUrl ?? product.release.imageUrl ?? undefined,
+        buyUrl: product.buyUrl ?? undefined,
+        contentsSummary: product.contentsSummary ?? undefined,
+        setName: product.release.name,
+        setHypeScore: product.release.hypeScore ? Number(product.release.hypeScore) : undefined,
+        confidence: product.confidence,
+        sourceUrl: product.sourceUrl ?? undefined,
+        strategy: latestStrategy
+          ? {
+              primary: latestStrategy.primary,
+              confidence: latestStrategy.confidence,
+              reasonSummary: latestStrategy.reasonSummary,
+              keyFactors: latestStrategy.keyFactors ?? undefined,
+            }
+          : undefined,
+      };
+    });
 
     res.json({
       success: true,

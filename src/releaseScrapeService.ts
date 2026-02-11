@@ -6,6 +6,7 @@
 import { PrismaClient, Category, SourceTier, Confidence } from '@prisma/client';
 import axios from 'axios';
 import { getScrapeSources, type SourceTierType } from './releaseIntelSources';
+import { generateReleaseStrategyForProductId } from './releaseStrategyService';
 
 const prisma = new PrismaClient();
 
@@ -25,7 +26,13 @@ export interface ExtractedProduct {
   preorderDate?: string;
   imageUrl?: string;
   buyUrl?: string;
+  /** Short summary of product contents and context (e.g. boosters, promos, etc.) */
   contentsSummary?: string;
+  /**
+   * Optional: explicit list of top chase cards for this product
+   * (e.g. ["Charizard ex SAR", "Umbreon ex SAR"]).
+   */
+  topChases?: string[];
 }
 
 export interface ExtractedSet {
@@ -131,24 +138,25 @@ async function fetchHtml(url: string): Promise<string> {
 // Extract structured data from HTML via OpenAI
 // ============================================
 
-const EXTRACTION_SYSTEM = `You are a data extractor for a trading card release calendar. Given HTML from a webpage about TCG/sports card releases, output a single JSON object with this exact shape (no markdown, no code fence):
+const EXTRACTION_SYSTEM = `You are a data extractor for a trading card release calendar. Given HTML from a webpage about TCG/sports card releases, output a single JSON object with this exact shape (no markdown, no code fence). Be precise about MSRP vs resale/market prices, and prefer information that is clearly labeled on the page:
 
 {
   "releases": [
     {
       "setName": "Exact set or expansion name as shown (e.g. Ascended Heroes, Perfect Order)",
-      "category": "pokemon",
+      "category": "pokemon" or "mtg" or "yugioh" or "one_piece" or "lorcana" or "digimon",
       "products": [
         {
           "name": "Full product name (e.g. Ascended Heroes Elite Trainer Box)",
           "productType": "elite_trainer_box | booster_box | booster_bundle | tin | collection | blister | build_battle | other",
-          "msrp": number or null,
-          "estimatedResale": number or null,
+          "msrp": number or null,                 // Retail price printed or clearly labeled as MSRP / Manufacturer's suggested price
+          "estimatedResale": number or null,      // Reasonable expected secondary-market price (if the page clearly implies it, otherwise null)
           "releaseDate": "YYYY-MM-DD or null",
           "preorderDate": "YYYY-MM-DD or null",
           "imageUrl": "url string or null",
-          "buyUrl": "url string or null",
-          "contentsSummary": "Short description (e.g. 9 boosters, 1 promo) or null"
+          "buyUrl": "url string or null",         // Direct link to buy / preorder this exact product (e.g. Pokémon Center, TCGPlayer, retailer PDP)
+          "contentsSummary": "Short description of contents and context (e.g. 9 boosters, 1 SAR promo, from Pokémon Center PDP) or null",
+          "topChases": ["Optional list of the most desirable individual cards for this product, or empty array if not clear"]
         }
       ]
     }
@@ -157,8 +165,12 @@ const EXTRACTION_SYSTEM = `You are a data extractor for a trading card release c
 
 Rules:
 - Only include releases and products you can clearly identify from the page.
-- Use "pokemon" for Pokémon TCG, "mtg" for Magic.
+- Use "pokemon" for Pokémon TCG, "mtg" for Magic, \"yugioh\" for Yu-Gi-Oh!, etc. If the game is unclear, omit that release.
 - productType must be one of: elite_trainer_box, booster_box, booster_bundle, tin, collection, blister, build_battle, other.
+- Only set msrp when the page shows a clearly labeled retail / MSRP price for that specific product.
+- Only set estimatedResale when the page gives a clear, current market price signal (e.g. current price on a marketplace listing for a sealed product). Do NOT guess.
+- Only set buyUrl when there is a clear button or link to buy or preorder that exact product.
+- For topChases, only include specific card names that the page strongly highlights as key pulls or chase cards for this product. If you cannot find any, use an empty array.
 - Output only valid JSON, no other text.`;
 
 async function extractWithOpenAi(html: string, sourceLabel: string): Promise<ExtractedPayload> {
@@ -320,6 +332,17 @@ async function upsertProductsForSet(
       },
     });
 
+    // Prefer explicit topChases when provided; otherwise fall back to contentsSummary as-is.
+    const topChasesSummary =
+      Array.isArray(p.topChases) && p.topChases.length > 0
+        ? `Top chases: ${p.topChases.join(', ')}`
+        : undefined;
+
+    const combinedContentsSummary =
+      p.contentsSummary && topChasesSummary
+        ? `${p.contentsSummary} ${topChasesSummary}`
+        : p.contentsSummary || topChasesSummary || null;
+
     const data = {
       name: p.name.trim(),
       productType: mapProductType(p.productType || 'other'),
@@ -330,31 +353,48 @@ async function upsertProductsForSet(
       preorderDate,
       imageUrl: p.imageUrl ?? null,
       buyUrl: p.buyUrl ?? null,
-      contentsSummary: p.contentsSummary ?? null,
+      contentsSummary: combinedContentsSummary,
       sourceTier: tier,
       sourceUrl,
       confidence: sourceConfig.tier === 'C' ? Confidence.rumor : Confidence.confirmed,
     };
 
     if (existing) {
+      let strategyNeedsUpdate = false;
       // Change detection: log diffs before update
-      if (await recordChange(existing.id, 'releaseDate', formatValue(existing.releaseDate), formatValue(releaseDate), sourceUrl)) changesCount++;
-      if (await recordChange(existing.id, 'preorderDate', formatValue(existing.preorderDate), formatValue(preorderDate), sourceUrl)) changesCount++;
-      if (await recordChange(existing.id, 'msrp', formatValue(existing.msrp), formatValue(data.msrp), sourceUrl)) changesCount++;
-      if (await recordChange(existing.id, 'estimatedResale', formatValue(existing.estimatedResale), formatValue(data.estimatedResale), sourceUrl)) changesCount++;
+      if (await recordChange(existing.id, 'releaseDate', formatValue(existing.releaseDate), formatValue(releaseDate), sourceUrl)) { changesCount++; strategyNeedsUpdate = true; }
+      if (await recordChange(existing.id, 'preorderDate', formatValue(existing.preorderDate), formatValue(preorderDate), sourceUrl)) { changesCount++; strategyNeedsUpdate = true; }
+      if (await recordChange(existing.id, 'msrp', formatValue(existing.msrp), formatValue(data.msrp), sourceUrl)) { changesCount++; strategyNeedsUpdate = true; }
+      if (await recordChange(existing.id, 'estimatedResale', formatValue(existing.estimatedResale), formatValue(data.estimatedResale), sourceUrl)) { changesCount++; strategyNeedsUpdate = true; }
 
       await prisma.releaseProduct.update({
         where: { id: existing.id },
         data,
       });
+
+      if (strategyNeedsUpdate && release.category === 'pokemon') {
+        try {
+          await generateReleaseStrategyForProductId(existing.id);
+        } catch (err) {
+          console.error('Error generating release strategy (update):', err);
+        }
+      }
     } else {
-      await prisma.releaseProduct.create({
+      const created = await prisma.releaseProduct.create({
         data: {
           releaseId: release.id,
           ...data,
         },
       });
       upserted++;
+
+      if (release.category === 'pokemon') {
+        try {
+          await generateReleaseStrategyForProductId(created.id);
+        } catch (err) {
+          console.error('Error generating release strategy (create):', err);
+        }
+      }
     }
   }
   return { upserted, changes: changesCount };
@@ -368,12 +408,14 @@ export interface ScrapeResult {
   sources: number;
   productsUpserted: number;
   changesDetected: number;
+  strategiesGenerated: number;
 }
 
 export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
   const sources = getScrapeSources();
   let totalProductsUpserted = 0;
   let totalChanges = 0;
+  let totalStrategies = 0;
 
   for (let i = 0; i < sources.length; i++) {
     const source = sources[i];
@@ -402,12 +444,29 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
           console.log(`   No matching release for set "${set.setName}" (${category}); skipping`);
           continue;
         }
+        const beforeStrategies = await prisma.releaseProductStrategy.count({
+          where: { releaseProduct: { releaseId: release.id } },
+        });
+
         const { upserted, changes } = await upsertProductsForSet(release, set.products || [], {
           url: source.url,
           tier: source.tier,
         });
         totalProductsUpserted += upserted;
         totalChanges += changes;
+
+        if (release.category === 'pokemon') {
+          const afterStrategies = await prisma.releaseProductStrategy.count({
+            where: { releaseProduct: { releaseId: release.id } },
+          });
+          const generatedForSet = Math.max(0, afterStrategies - beforeStrategies);
+          if (generatedForSet > 0) {
+            console.log(
+              `   Strategies generated for set "${set.setName}" (${release.id}): ${generatedForSet}`,
+            );
+            totalStrategies += generatedForSet;
+          }
+        }
       }
     } catch (err) {
       console.error(`❌ Scrape failed for ${source.url}:`, err);
@@ -418,5 +477,6 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
     sources: sources.length,
     productsUpserted: totalProductsUpserted,
     changesDetected: totalChanges,
+    strategiesGenerated: totalStrategies,
   };
 }

@@ -215,6 +215,7 @@ model ReleaseProduct {
 
   release          Release     @relation(fields: [releaseId], references: [id], onDelete: Cascade)
   changes          ReleaseProductChange[]
+  strategies       ReleaseProductStrategy[]
 
   @@map("release_products")
   @@index([category])
@@ -236,6 +237,21 @@ model ReleaseProductChange {
   @@map("release_product_changes")
   @@index([releaseProductId])
   @@index([detectedAt])
+}
+
+model ReleaseProductStrategy {
+  id               String     @id @default(uuid())
+  releaseProductId String     @map("release_product_id")
+  primary          String
+  confidence       Float
+  reasonSummary    String     @map("reason_summary")
+  keyFactors       Json?      @map("key_factors")
+  createdAt        DateTime   @default(now()) @map("created_at")
+
+  releaseProduct   ReleaseProduct @relation(fields: [releaseProductId], references: [id], onDelete: Cascade)
+
+  @@map("release_product_strategies")
+  @@index([releaseProductId])
 }
 
 model TrendingItem {
