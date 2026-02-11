@@ -7,6 +7,7 @@ import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { syncAllReleases } from '../releaseSyncService';
 import { scrapeAndUpsertReleaseProducts } from '../releaseScrapeService';
+import { backfillStrategiesForPokemon } from '../releaseStrategyService';
 
 const prisma = new PrismaClient();
 
@@ -21,12 +22,20 @@ export async function triggerReleaseSync(req: Request, res: Response) {
     const results = await syncAllReleases();
 
     // After API sync, run Tier B pipeline (scrape + AI extraction) to enrich release products
-    let scrapeResult: { sources: number; productsUpserted: number; changesDetected: number } | undefined;
+    let scrapeResult: { sources: number; productsUpserted: number; changesDetected: number; strategiesGenerated?: number } | undefined;
     try {
       scrapeResult = await scrapeAndUpsertReleaseProducts();
       console.log(`✅ Scrape complete: ${scrapeResult.productsUpserted} products upserted, ${scrapeResult.changesDetected} changes from ${scrapeResult.sources} source(s)`);
     } catch (scrapeErr) {
       console.error('⚠️ Scrape step failed (releases still synced):', scrapeErr);
+    }
+
+    // Backfill strategies for Pokémon products that don't have one yet (Tier A set_default products)
+    let strategiesBackfilled = 0;
+    try {
+      strategiesBackfilled = await backfillStrategiesForPokemon();
+    } catch (backfillErr) {
+      console.error('⚠️ Strategy backfill failed:', backfillErr);
     }
 
     res.json({
@@ -35,6 +44,7 @@ export async function triggerReleaseSync(req: Request, res: Response) {
       data: {
         ...results,
         scrape: scrapeResult,
+        strategiesBackfilled,
       },
       timestamp: new Date().toISOString(),
     });

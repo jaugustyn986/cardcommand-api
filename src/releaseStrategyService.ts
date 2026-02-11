@@ -126,3 +126,30 @@ export async function generateReleaseStrategyForProductId(
   });
 }
 
+/** Backfill strategies for Pokémon products that don't have one yet (e.g. Tier A set_default products) */
+export async function backfillStrategiesForPokemon(): Promise<number> {
+  const products = await prisma.releaseProduct.findMany({
+    where: {
+      category: 'pokemon',
+      strategies: { none: {} },
+    },
+    select: { id: true },
+    take: 50,
+  });
+
+  let count = 0;
+  for (const p of products) {
+    try {
+      await generateReleaseStrategyForProductId(p.id);
+      count++;
+      await new Promise((r) => setTimeout(r, 1500));
+    } catch (err) {
+      console.error(`Strategy backfill failed for product ${p.id}:`, err);
+    }
+  }
+  if (count > 0) {
+    console.log(`✅ Strategy backfill: generated ${count} strategies for Pokémon products`);
+  }
+  return count;
+}
+
