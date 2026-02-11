@@ -3,7 +3,7 @@
 // Syncs release data from external APIs
 // ============================================
 
-import { PrismaClient, Category, Release } from '@prisma/client';
+import { PrismaClient, Category, Release, SourceTier } from '@prisma/client';
 import axios from 'axios';
 
 const prisma = new PrismaClient();
@@ -72,7 +72,7 @@ export async function syncPokemonReleases(): Promise<number> {
             updatedAt: new Date(),
           },
         });
-        await ensureDefaultReleaseProduct(updatedRelease);
+        await ensureDefaultReleaseProduct(updatedRelease, { category: 'pokemon', set });
       } else {
         // Create new release
         const newRelease = await prisma.release.create({
@@ -91,7 +91,7 @@ export async function syncPokemonReleases(): Promise<number> {
             isReleased: releaseDate <= new Date(),
           },
         });
-        await ensureDefaultReleaseProduct(newRelease);
+        await ensureDefaultReleaseProduct(newRelease, { category: 'pokemon', set });
         syncedCount++;
       }
     }
@@ -171,7 +171,7 @@ export async function syncMTGReleases(): Promise<number> {
             updatedAt: new Date(),
           },
         });
-        await ensureDefaultReleaseProduct(updatedRelease);
+        await ensureDefaultReleaseProduct(updatedRelease, { category: 'mtg', set });
       } else {
         const newRelease = await prisma.release.create({
           data: {
@@ -189,7 +189,7 @@ export async function syncMTGReleases(): Promise<number> {
             isReleased: releaseDate <= new Date(),
           },
         });
-        await ensureDefaultReleaseProduct(newRelease);
+        await ensureDefaultReleaseProduct(newRelease, { category: 'mtg', set });
         syncedCount++;
       }
     }
@@ -289,30 +289,96 @@ export async function syncAllReleases(): Promise<{ pokemon: number; mtg: number 
 }
 
 // ============================================
+// Tier A link builders (consistent UX across all products)
+// ============================================
+
+function tierALinksForPokemon(set: PokemonSet): { buyUrl: string; sourceUrl: string } {
+  const q = encodeURIComponent(set.name);
+  return {
+    buyUrl: `https://www.tcgplayer.com/search/pokemon/product?q=${q}`,
+    sourceUrl: 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions',
+  };
+}
+
+function tierALinksForMTG(set: ScryfallSet): { buyUrl: string; sourceUrl: string } {
+  const q = encodeURIComponent(set.name);
+  return {
+    buyUrl: `https://www.tcgplayer.com/search/magic/product?q=${q}`,
+    sourceUrl: set.scryfall_uri || `https://scryfall.com/sets/${set.code}`,
+  };
+}
+
+/** Conservative heuristic for sealed resale when Tier A has no market data (typically ~5–10% above MSRP at release) */
+function tierAEstimatedResale(msrp: number): number {
+  return Math.round(msrp * 1.08 * 100) / 100;
+}
+
+// ============================================
 // Release Product helpers
 // ============================================
 
-async function ensureDefaultReleaseProduct(release: Release): Promise<void> {
-  // Ensure every Release has at least one associated product for the UI
+type TierAMetadata = { category: 'pokemon'; set: PokemonSet } | { category: 'mtg'; set: ScryfallSet };
+
+async function ensureDefaultReleaseProduct(
+  release: Release,
+  tierAMeta?: TierAMetadata,
+): Promise<void> {
   const existing = await prisma.releaseProduct.findFirst({
     where: { releaseId: release.id },
   });
 
-  if (existing) return;
+  let buyUrl: string | null = null;
+  let sourceUrl: string | null = null;
+  let estimatedResale: number | null = release.estimatedResale ?? null;
+
+  if (tierAMeta) {
+    if (tierAMeta.category === 'pokemon') {
+      const links = tierALinksForPokemon(tierAMeta.set);
+      buyUrl = links.buyUrl;
+      sourceUrl = links.sourceUrl;
+    } else {
+      const links = tierALinksForMTG(tierAMeta.set);
+      buyUrl = links.buyUrl;
+      sourceUrl = links.sourceUrl;
+    }
+    if (estimatedResale == null && release.msrp != null) {
+      estimatedResale = tierAEstimatedResale(release.msrp);
+    }
+  }
+
+  const productData = {
+    name: `${release.name} - Booster Product`,
+    productType: 'set_default' as const,
+    category: release.category,
+    msrp: release.msrp,
+    estimatedResale,
+    releaseDate: release.releaseDate,
+    preorderDate: null as Date | null,
+    imageUrl: release.imageUrl,
+    buyUrl,
+    sourceUrl,
+    sourceTier: tierAMeta ? SourceTier.A : null,
+    contentsSummary: release.description,
+  };
+
+  if (existing) {
+    await prisma.releaseProduct.update({
+      where: { id: existing.id },
+      data: {
+        buyUrl: buyUrl ?? existing.buyUrl,
+        sourceUrl: sourceUrl ?? existing.sourceUrl,
+        estimatedResale: estimatedResale ?? existing.estimatedResale,
+        sourceTier: tierAMeta ? SourceTier.A : existing.sourceTier,
+      },
+    });
+    return;
+  }
 
   await prisma.releaseProduct.create({
     data: {
       releaseId: release.id,
-      name: `${release.name} - Booster Product`,
-      productType: 'set_default',
-      category: release.category,
-      msrp: release.msrp,
-      estimatedResale: release.estimatedResale ?? null,
-      releaseDate: release.releaseDate,
-      preorderDate: null,
-      imageUrl: release.imageUrl,
-      buyUrl: null,
-      contentsSummary: release.description,
+      ...productData,
     },
   });
 }
+
