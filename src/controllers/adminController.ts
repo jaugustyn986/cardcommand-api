@@ -5,9 +5,7 @@
 
 import { Request, Response } from 'express';
 import { PrismaClient } from '@prisma/client';
-import { syncAllReleases, backfillTierALinks } from '../releaseSyncService';
-import { scrapeAndUpsertReleaseProducts } from '../releaseScrapeService';
-import { backfillStrategiesForPokemon } from '../releaseStrategyService';
+import { runReleaseSyncPipeline } from '../releaseSyncPipeline';
 
 const prisma = new PrismaClient();
 
@@ -19,42 +17,12 @@ export async function triggerReleaseSync(req: Request, res: Response) {
   try {
     console.log('🔄 Manual release sync triggered by admin');
 
-    const results = await syncAllReleases();
-
-    // Backfill buyUrl, sourceUrl, estimatedResale for set_default products missing them (catches pre-deploy data)
-    let tierALinksBackfilled = 0;
-    try {
-      tierALinksBackfilled = await backfillTierALinks();
-    } catch (err) {
-      console.error('⚠️ Tier A links backfill failed:', err);
-    }
-
-    // After API sync, run Tier B pipeline (scrape + AI extraction) to enrich release products
-    let scrapeResult: { sources: number; productsUpserted: number; changesDetected: number; strategiesGenerated?: number } | undefined;
-    try {
-      scrapeResult = await scrapeAndUpsertReleaseProducts();
-      console.log(`✅ Scrape complete: ${scrapeResult.productsUpserted} products upserted, ${scrapeResult.changesDetected} changes from ${scrapeResult.sources} source(s)`);
-    } catch (scrapeErr) {
-      console.error('⚠️ Scrape step failed (releases still synced):', scrapeErr);
-    }
-
-    // Backfill strategies for Pokémon products that don't have one yet (Tier A set_default products)
-    let strategiesBackfilled = 0;
-    try {
-      strategiesBackfilled = await backfillStrategiesForPokemon();
-    } catch (backfillErr) {
-      console.error('⚠️ Strategy backfill failed:', backfillErr);
-    }
+    const data = await runReleaseSyncPipeline();
 
     res.json({
       success: true,
       message: 'Release sync completed',
-      data: {
-        ...results,
-        tierALinksBackfilled,
-        scrape: scrapeResult,
-        strategiesBackfilled,
-      },
+      data,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

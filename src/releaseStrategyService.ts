@@ -20,6 +20,16 @@ export interface ReleaseStrategyPayload {
   }[];
 }
 
+/** Strategy rules (see docs/STRATEGY_RULES.md) */
+const STRATEGY_RULES = `
+Primary strategy definitions (use exactly one):
+- Flip: Sell within 2-4 weeks. Use when estimatedResale is meaningfully above MSRP (≥15%+) AND hype is strong.
+- Short Hold: Hold 3-6 months. Use when moderate upside vs MSRP, decent hype, or likely singles demand.
+- Long Hold: Hold 1+ years. Use for iconic sets, first prints, or products likely to appreciate over years.
+- Avoid: Do not buy for investment. Use when weak demand, high print run, or estimatedResale ≤ MSRP.
+- Watch: Insufficient data. Use when msrp, estimatedResale, or hypeScore are missing. Prefer over guessing.
+`;
+
 const STRATEGY_SYSTEM_PROMPT = `You are an investment strategy assistant for sealed trading card products.
 Given structured JSON about a single sealed product release, output a SHORT strategy recommendation
 as JSON. Focus on realistic, conservative guidance. Do NOT invent prices; rely only on the provided
@@ -38,15 +48,17 @@ Output ONLY a JSON object (no markdown, no code fences) with this exact shape:
     }
   ]
 }
+${STRATEGY_RULES}
 
-Guidelines:
-- Prefer \"Watch\" when the data is thin (no clear estimatedResale or hypeScore).
-- \"Flip\" is for short-term opportunities where estimatedResale is meaningfully above MSRP and hype is strong.
-- \"Short Hold\" is for 3-6 month windows where upside exists but is less explosive.
-- \"Long Hold\" is for iconic sets or products likely to appreciate over years.
-- \"Avoid\" is for products with weak demand, high print run, or poor value vs MSRP.
-- When in doubt between more aggressive and more conservative options, choose the more conservative one.
-- Always base reasoning on the provided fields and the sourceUrl context, not on outside knowledge.`;
+Decision flow:
+1. If msrp, estimatedResale, or hypeScore are missing → Watch
+2. If estimatedResale ≤ MSRP or clearly below → Avoid
+3. If estimatedResale >> MSRP (e.g. 20%+) and hype strong → Flip
+4. If modest premium and decent demand → Short Hold
+5. If iconic, low print, or early scarcity signals → Long Hold
+6. When in doubt, choose the MORE CONSERVATIVE option.
+
+Always base reasoning on the provided fields and sourceUrl context, not on outside knowledge.`;
 
 export async function generateReleaseStrategyForProductId(
   releaseProductId: string,

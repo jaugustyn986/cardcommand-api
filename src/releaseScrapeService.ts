@@ -214,6 +214,7 @@ async function extractWithOpenAi(html: string, sourceLabel: string): Promise<Ext
 
 // ============================================
 // Match extracted setName to a Release in DB
+// Uses substring match first, then fuzzy (Jaro-Winkler–like) if no exact match
 // ============================================
 
 function normalizeForMatch(s: string): string {
@@ -224,6 +225,30 @@ function normalizeForMatch(s: string): string {
     .trim();
 }
 
+/** Levenshtein distance → similarity (0–1). 1 = identical. */
+function stringSimilarity(a: string, b: string): number {
+  if (a === b) return 1;
+  if (!a || !b) return 0;
+  const lenA = a.length;
+  const lenB = b.length;
+  const maxLen = Math.max(lenA, lenB);
+  const dp: number[][] = Array(lenA + 1)
+    .fill(null)
+    .map(() => Array(lenB + 1).fill(0));
+  for (let i = 0; i <= lenA; i++) dp[i][0] = i;
+  for (let j = 0; j <= lenB; j++) dp[0][j] = j;
+  for (let i = 1; i <= lenA; i++) {
+    for (let j = 1; j <= lenB; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + cost);
+    }
+  }
+  const dist = dp[lenA][lenB];
+  return 1 - dist / maxLen;
+}
+
+const FUZZY_MATCH_THRESHOLD = 0.82;
+
 async function findReleaseForSet(setName: string, category: Category) {
   const normalized = normalizeForMatch(setName);
   const releases = await prisma.release.findMany({
@@ -231,14 +256,26 @@ async function findReleaseForSet(setName: string, category: Category) {
     include: { products: true },
   });
 
+  // 1. Exact substring match (containment)
   for (const r of releases) {
     const rNorm = normalizeForMatch(r.name);
-    // Match if one contains the other (e.g. "Ascended Heroes" vs "Ascended Heroes (Mega Evolution)")
     if (rNorm.includes(normalized) || normalized.includes(rNorm)) {
       return r;
     }
   }
-  return null;
+
+  // 2. Fuzzy match if no containment
+  let best: (typeof releases)[0] | null = null;
+  let bestScore = FUZZY_MATCH_THRESHOLD;
+  for (const r of releases) {
+    const rNorm = normalizeForMatch(r.name);
+    const score = stringSimilarity(normalized, rNorm);
+    if (score >= bestScore) {
+      bestScore = score;
+      best = r;
+    }
+  }
+  return best;
 }
 
 // ============================================
