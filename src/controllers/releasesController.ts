@@ -41,6 +41,12 @@ function deriveStatus(releaseDate?: Date | null, confidence?: Confidence): 'rumo
   return 'official';
 }
 
+function confidenceBandFromScore(score: number): 'high' | 'medium' | 'low' {
+  if (score >= 70) return 'high';
+  if (score >= 40) return 'medium';
+  return 'low';
+}
+
 // ============================================
 // Get All Releases
 // ============================================
@@ -179,6 +185,9 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
       fromDate,
       toDate,
       confidence: confidenceParam,
+      confidenceBand: confidenceBandParam,
+      status: statusParam,
+      sourceType: sourceTypeParam,
       sortBy = 'releaseDate',
       sortOrder = 'asc',
       page = '1',
@@ -298,8 +307,44 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
       if (preferThis) seen.set(key, p);
     }
     const deduped = Array.from(seen.values());
-    const totalCount = deduped.length;
-    const products = deduped.slice(skip, skip + perPageNum);
+    const filtered = deduped.filter((product) => {
+      const sourceType = deriveSourceType(product.sourceUrl);
+      const status = deriveStatus(product.releaseDate, product.confidence);
+      const confidenceScore = deriveConfidenceScore(product.confidence, product.sourceTier as 'A' | 'B' | 'C' | null);
+      const confidenceBand = confidenceBandFromScore(confidenceScore);
+
+      if (
+        statusParam &&
+        typeof statusParam === 'string' &&
+        ['rumor', 'announced', 'official', 'released'].includes(statusParam) &&
+        status !== statusParam
+      ) {
+        return false;
+      }
+
+      if (
+        sourceTypeParam &&
+        typeof sourceTypeParam === 'string' &&
+        ['official', 'retailer', 'distributor', 'news', 'community'].includes(sourceTypeParam) &&
+        sourceType !== sourceTypeParam
+      ) {
+        return false;
+      }
+
+      if (
+        confidenceBandParam &&
+        typeof confidenceBandParam === 'string' &&
+        ['high', 'medium', 'low'].includes(confidenceBandParam) &&
+        confidenceBand !== confidenceBandParam
+      ) {
+        return false;
+      }
+
+      return true;
+    });
+
+    const totalCount = filtered.length;
+    const products = filtered.slice(skip, skip + perPageNum);
 
     const transformedProducts = products.map((product) => {
       const latestStrategy = product.strategies && product.strategies.length > 0 ? product.strategies[0] : null;
@@ -326,6 +371,7 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
         setHypeScore: product.release.hypeScore ? Number(product.release.hypeScore) : undefined,
         confidence: product.confidence,
         confidenceScore: deriveConfidenceScore(product.confidence, product.sourceTier as 'A' | 'B' | 'C' | null),
+        sourceTier: product.sourceTier ?? undefined,
         sourceType: deriveSourceType(product.sourceUrl),
         status: deriveStatus(product.releaseDate, product.confidence),
         sourceUrl: product.sourceUrl ?? undefined,
