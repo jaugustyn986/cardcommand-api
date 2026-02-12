@@ -46,6 +46,14 @@ export interface ExtractedPayload {
   releases: ExtractedSet[];
 }
 
+interface PokemonComExpansionItem {
+  title: string;
+  url: string;
+  system?: string;
+  releaseDate?: string;
+  thumbnail?: string;
+}
+
 // ============================================
 // robots.txt check (compliance: skip if disallowed)
 // ============================================
@@ -133,6 +141,113 @@ async function fetchHtml(url: string): Promise<string> {
     maxRedirects: 3,
   });
   return data;
+}
+
+function cleanHtmlText(input: string): string {
+  return input
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&mdash;|&#8212;|&#x2014;/gi, '—')
+    .replace(/&ndash;|&#8211;|&#x2013;/gi, '–')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toAbsolutePokemonUrl(pathOrUrl?: string): string | undefined {
+  if (!pathOrUrl) return undefined;
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) return pathOrUrl;
+  if (pathOrUrl.startsWith('/')) return `https://www.pokemon.com${pathOrUrl}`;
+  return `https://www.pokemon.com/${pathOrUrl}`;
+}
+
+function parsePokemonComSetPage(html: string, sourceUrl: string): ExtractedPayload {
+  const titleMatch =
+    html.match(/<meta\s+name="pkm-title"\s+content="([^"]+)"/i) ||
+    html.match(/<title>([^<]+)\|/i) ||
+    html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
+  const rawSetName = titleMatch?.[1] ? cleanHtmlText(titleMatch[1]) : '';
+  const setName = rawSetName.replace(/^Pok[eé]mon\s+TCG:\s*/i, '').trim();
+
+  const dateMatch = html.match(
+    /Release\s*Date<\/td>\s*<td[^>]*>\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})\s*<\/td>/i,
+  );
+  const releaseDate = dateMatch?.[1] ? new Date(dateMatch[1]).toISOString().slice(0, 10) : undefined;
+
+  const summaryMatch = html.match(/<p>([\s\S]{80,1200}?)<\/p>/i);
+  const contentsSummary = summaryMatch?.[1] ? cleanHtmlText(summaryMatch[1]).slice(0, 500) : undefined;
+
+  const imageMatch =
+    html.match(/<meta\s+property="og:image"\s+content="([^"]+)"/i) ||
+    html.match(/<img[^>]+src="([^"]+me[^"]+logo[^"]+)"/i);
+  const imageUrl = imageMatch?.[1] ? toAbsolutePokemonUrl(imageMatch[1]) : undefined;
+
+  if (!setName) return { releases: [] };
+
+  return {
+    releases: [
+      {
+        setName,
+        category: 'pokemon',
+        products: [
+          {
+            name: setName,
+            productType: 'set_default',
+            releaseDate,
+            imageUrl,
+            buyUrl: sourceUrl,
+            contentsSummary,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+async function fetchPokemonComExpansionsApiPayload(): Promise<ExtractedPayload> {
+  try {
+    const { data } = await axios.get<PokemonComExpansionItem[]>('https://www.pokemon.com/api/1/us/expansions', {
+      timeout: 15000,
+      headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+    });
+
+    const items = Array.isArray(data) ? data : [];
+    const releases: ExtractedSet[] = [];
+    for (const item of items) {
+      const setName = cleanHtmlText(item.title || '').replace(/^Pok[eé]mon\s+TCG:\s*/i, '').trim();
+      if (!setName) continue;
+
+      const parsedDate =
+        item.releaseDate && !isNaN(new Date(item.releaseDate).getTime())
+          ? new Date(item.releaseDate).toISOString().slice(0, 10)
+          : undefined;
+      const sourceUrl = toAbsolutePokemonUrl(item.url);
+
+      releases.push({
+        setName,
+        category: 'pokemon',
+        products: [
+          {
+            name: setName,
+            productType: 'set_default',
+            releaseDate: parsedDate,
+            imageUrl: toAbsolutePokemonUrl(item.thumbnail),
+            buyUrl: sourceUrl,
+            contentsSummary: item.system ? `Series: ${cleanHtmlText(item.system)}` : undefined,
+          },
+        ],
+      });
+    }
+
+    return { releases };
+  } catch (err) {
+    console.error('❌ Pokémon expansions API fetch failed:', err);
+    return { releases: [] };
+  }
 }
 
 // ============================================
@@ -549,8 +664,18 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
       }
 
       console.log(`🔄 [Tier ${source.tier}] ${source.name}...`);
-      const html = await fetchHtml(source.url);
-      const payload = await extractWithOpenAi(html, source.name);
+      let payload: ExtractedPayload = { releases: [] };
+
+      if (source.id === 'pokemon-com-expansions') {
+        // Deterministic official endpoint; avoids missing JS-rendered entries.
+        payload = await fetchPokemonComExpansionsApiPayload();
+      } else if (source.id === 'pokemon-com-perfect-order') {
+        const html = await fetchHtml(source.url);
+        payload = parsePokemonComSetPage(html, source.url);
+      } else {
+        const html = await fetchHtml(source.url);
+        payload = await extractWithOpenAi(html, source.name);
+      }
 
       if (!payload.releases?.length) {
         console.log(`   No releases extracted from ${source.name}`);
