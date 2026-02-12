@@ -491,5 +491,57 @@ function calculateSavings(marketPrice: number, dealPrice: number): number {
 
 ---
 
-*Last Updated: February 9, 2026*
+## 16. Release Intelligence Architecture (Current)
+
+- Unified sync entrypoint: `src/releaseSyncPipeline.ts`.
+- Trigger paths:
+  - Manual: `POST /api/admin/releases/sync`
+  - Scheduled: `src/jobs/releaseSyncJob.ts` (UTC cron)
+- Ingestion order:
+  1. Tier A deterministic sync (`releaseSyncService.ts`)
+  2. Tier A link backfill
+  3. Pokémon set-default pricing cleanup
+  4. Tier B/C scrape + extraction + merge (`releaseScrapeService.ts`)
+  5. Strategy backfill (`releaseStrategyService.ts`)
+- Source governance:
+  - registry in `releaseIntelSources.ts`
+  - typed by tier and `sourceType` (official/distributor/retailer/news/community)
+  - scrape participation controlled by `includeInScrape`.
+- Output behavior:
+  - products API derives trust fields (`status`, `sourceType`, `confidenceScore`)
+  - dedupe logic normalizes set naming variants
+  - placeholder Pokémon set-default pricing is intentionally suppressed.
+
+---
+
+## 17. TCG Data Layer Architecture (Phase 1)
+
+- Purpose:
+  - decouple provider ingestion from request-time reads
+  - provide one normalized DB model for cross-game set/card/price data
+- Data flow:
+  1. provider sync jobs fetch from external APIs
+  2. raw payloads cached in `provider_raw_cache`
+  3. normalized upserts into `games`, `tcg_sets`, `tcg_cards`, `price_latest`, `price_history_daily`
+  4. API reads only from DB via `/api/tcg/*`
+- Current provider status:
+  - Pokémon (`pokemontcg.io`) enabled
+  - MTG (`scryfall`) scaffolded and feature-flagged off
+  - Yu-Gi-Oh (`ygoprodeck`) scaffolded and feature-flagged off
+- Key backend files:
+  - `src/services/tcg/types.ts`
+  - `src/services/tcg/providerRegistry.ts`
+  - `src/services/tcg/adapters/pokemonTcgProvider.ts`
+  - `src/services/tcg/tcgSyncPipeline.ts`
+  - `src/jobs/tcgSyncJob.ts`
+  - `src/controllers/tcgController.ts`
+  - `src/routes/index.ts` (`/tcg` routes)
+- Runtime controls:
+  - `TCG_SYNC_ENABLED=true` to run TCG cron jobs
+  - `TCG_POKEMON_ENABLED` (defaults enabled unless explicitly `false`)
+  - optional `POKEMON_TCG_API_KEY` for higher limit access
+
+---
+
+*Last Updated: February 9, 2026 (release intelligence architecture update)*
 *Enforced by: Code review, CI/CD, linting*

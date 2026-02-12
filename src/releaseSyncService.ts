@@ -3,10 +3,9 @@
 // Syncs release data from external APIs
 // ============================================
 
-import { PrismaClient, Category, Release, SourceTier } from '@prisma/client';
+import { Category, Release, SourceTier } from '@prisma/client';
 import axios from 'axios';
-
-const prisma = new PrismaClient();
+import { prisma } from './config/database';
 
 // ============================================
 // Pokemon TCG API Sync
@@ -591,4 +590,3 @@ export async function backfillPokemonSetDefaultPricing(): Promise<number> {
 
   return products.length;
 }
-

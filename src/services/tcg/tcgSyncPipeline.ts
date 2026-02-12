@@ -1,5 +1,6 @@
 import { prisma } from '../../config/database';
 import { PokemonTcgProvider } from './adapters/pokemonTcgProvider';
+import { tcgConfig } from './config';
 import { getProviderForGame, initializeProviderRegistry, isGameEnabled } from './providerRegistry';
 import { upsertCards, upsertLatestPrices, upsertSets } from './tcgUpsertService';
 import { SupportedGameSlug } from './types';
@@ -38,7 +39,7 @@ export async function syncCardsForNewOrRecentSets(game: SupportedGameSlug): Prom
 
   const now = new Date();
   const recentCutoff = new Date(now);
-  recentCutoff.setDate(recentCutoff.getDate() - 120);
+  recentCutoff.setDate(recentCutoff.getDate() - tcgConfig.recentSetWindowDays);
 
   const dbSets = await prisma.tcgSet.findMany({
     where: {
@@ -57,7 +58,7 @@ export async function syncCardsForNewOrRecentSets(game: SupportedGameSlug): Prom
 
   const bySetCards = await runWithConcurrency(
     dbSets,
-    4,
+    tcgConfig.cardSyncConcurrency,
     async (set) => {
       if (set.provider !== provider.providerKey) return [];
       const cards: Awaited<ReturnType<typeof provider.listCards>> = [];
@@ -87,7 +88,7 @@ export async function syncPricesRecent(game: SupportedGameSlug, recentOnly = tru
 
   const now = new Date();
   const recentCutoff = new Date(now);
-  recentCutoff.setDate(recentCutoff.getDate() - 120);
+  recentCutoff.setDate(recentCutoff.getDate() - tcgConfig.recentSetWindowDays);
 
   const cards = await prisma.tcgCard.findMany({
     where: {
@@ -111,7 +112,7 @@ export async function syncPricesRecent(game: SupportedGameSlug, recentOnly = tru
   if (cards.length === 0) return 0;
   const idMap = new Map(cards.map((c) => [c.providerCardId, c.id]));
 
-  const chunkSize = 100;
+  const chunkSize = tcgConfig.priceChunkSize;
   let synced = 0;
   for (let i = 0; i < cards.length; i += chunkSize) {
     const chunk = cards.slice(i, i + chunkSize);

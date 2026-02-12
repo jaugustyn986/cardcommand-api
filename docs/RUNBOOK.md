@@ -189,6 +189,10 @@ Required:
 
 Optional:
 - POKEMON_TCG_API_KEY (for Pokemon sync)
+- OPENAI_API_KEY (for AI extraction in scrape stage)
+- OPENAI_EXTRACTION_MODEL (optional model override)
+- TCG_SYNC_ENABLED="true" (enable TCG data layer cron jobs)
+- TCG_POKEMON_ENABLED="true" (enabled unless set to false)
 ```
 
 #### Health Check
@@ -211,7 +215,7 @@ curl https://cardcommand-api-production.up.railway.app/health
 #### Environment Variables (Vercel)
 ```
 Required:
-- VITE_API_URL="https://cardcommand-api-production.uprailway.app/api"
+- VITE_API_URL="https://cardcommand-api-production.up.railway.app/api"
 ```
 
 #### Manual Deployment
@@ -401,6 +405,8 @@ psql $DATABASE_URL < backup_file.sql
 ```bash
 # Add to backend .env
 POKEMON_TCG_API_KEY="your-api-key"
+TCG_SYNC_ENABLED="true"
+TCG_POKEMON_ENABLED="true"
 
 # Redeploy backend
 railway up
@@ -419,6 +425,14 @@ curl https://cardcommand-api-production.up.railway.app/api/admin/releases/status
 # - Open frontend: https://cardcommand-frontend.vercel.app
 # - Switch to Releases tab
 # - Filter by category (e.g. Pokemon, MTG) and confirm recent sets appear with correct dates/hype scores
+
+# TCG Data Layer endpoints (DB-backed reads)
+curl https://cardcommand-api-production.up.railway.app/api/tcg/games
+curl "https://cardcommand-api-production.up.railway.app/api/tcg/pokemon/sets?sort=release_date_desc"
+# replace <setId> with a real set row ID from response
+curl "https://cardcommand-api-production.up.railway.app/api/tcg/pokemon/sets/<setId>/cards?page=1&perPage=50"
+# replace <cardId> with a real card ID from response
+curl "https://cardcommand-api-production.up.railway.app/api/tcg/pokemon/cards/<cardId>"
 ```
 
 #### Release images
@@ -467,7 +481,7 @@ curl https://cardcommand-api-production.up.railway.app/api/admin/health
 
 ### Release scrape (OpenAI) – product-level data
 
-After each **Sync releases** run, the backend can scrape curated pages (e.g. IGN Pokémon TCG 2026) and use OpenAI to extract product-level rows (ETBs, booster boxes, tins, etc.) into `release_products`. This step is optional.
+After each **Sync releases** run, the backend executes a unified release pipeline that can combine deterministic and AI-assisted extraction to produce product-level rows (ETBs, booster boxes, tins, and set-default entries when only set-level data exists).
 
 #### Get API key
 ```
@@ -486,9 +500,9 @@ OPENAI_EXTRACTION_MODEL="gpt-4o-mini"      # Optional; default gpt-4o-mini
 If `OPENAI_API_KEY` is not set, the scrape step is skipped and sync still completes using Pokemon/MTG APIs only.
 
 #### Whitelisted sources (in code)
-- IGN Pokémon TCG 2026 release schedule  
-- Pokémon.com TCG expansions page  
-Additional Tier B sources: `src/releaseIntelSources.ts` (`RELEASE_INTEL_SOURCES`).
+- Tier/source registry is defined in `src/releaseIntelSources.ts` (`RELEASE_INTEL_SOURCES`).
+- Tier A includes deterministic APIs (Pokemon TCG API, Scryfall, pokemon.com expansions API).
+- Tier B/C include curated pages and source-specific parsing/extraction.
 
 ### Release intel pipeline (Phase 1)
 
@@ -498,6 +512,19 @@ Additional Tier B sources: `src/releaseIntelSources.ts` (`RELEASE_INTEL_SOURCES`
   - `GET /api/releases/products?confidence=confirmed` – optional filter by confidence.
   - `GET /api/releases/changes?limit=50&since=ISO_DATE` – recent changes for “what changed” UX.
 - **Schema:** `ReleaseProduct` has `sourceTier`, `sourceUrl`, `confidence`; new table `release_product_changes` stores field-level diffs. Run `npx prisma db push` (or migrate) after pulling.
+
+### Release sync pipeline operations
+
+- Manual trigger endpoint: `POST /api/admin/releases/sync`.
+- Cron schedule: `06:00`, `12:00`, `18:00` UTC (`src/jobs/releaseSyncJob.ts`).
+- Shared orchestration entrypoint: `src/releaseSyncPipeline.ts`.
+- Pipeline stages include:
+  1. Tier A sync
+  2. Tier A link backfill
+  3. Pokemon set-default pricing cleanup
+  4. Tier B/C scrape-and-upsert
+  5. strategy backfill
+- If `OPENAI_API_KEY` is absent, AI extraction is skipped but deterministic stages continue.
 
 ---
 
@@ -569,5 +596,5 @@ npm run lint         # Run linter
 
 ---
 
-*Last Updated: February 9, 2026*
+*Last Updated: February 9, 2026 (release intelligence sync update)*
 *Maintained by: CardCommand Team*
