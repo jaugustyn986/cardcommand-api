@@ -7,6 +7,40 @@ import { PrismaClient, Confidence } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+function deriveSourceType(url?: string | null): 'official' | 'retailer' | 'distributor' | 'news' | 'community' {
+  const u = (url || '').toLowerCase();
+  if (!u) return 'news';
+  if (u.includes('pokemon.com') || u.includes('wizards.com') || u.includes('konami') || u.includes('onepiece-cardgame') || u.includes('disneylorcana')) {
+    return 'official';
+  }
+  if (u.includes('gtsdistribution') || u.includes('southernhobby') || u.includes('alliance-games')) {
+    return 'distributor';
+  }
+  if (u.includes('gamestop') || u.includes('bestbuy') || u.includes('target')) {
+    return 'retailer';
+  }
+  if (u.includes('pokebeach') || u.includes('reddit') || u.includes('x.com') || u.includes('twitter.com')) {
+    return 'community';
+  }
+  return 'news';
+}
+
+function deriveConfidenceScore(
+  confidence: Confidence,
+  sourceTier?: 'A' | 'B' | 'C' | null,
+): number {
+  const base = confidence === 'confirmed' ? 80 : confidence === 'unconfirmed' ? 60 : 35;
+  const tierBoost = sourceTier === 'A' ? 8 : sourceTier === 'B' ? 2 : 0;
+  return Math.max(0, Math.min(100, base + tierBoost));
+}
+
+function deriveStatus(releaseDate?: Date | null, confidence?: Confidence): 'rumor' | 'announced' | 'official' | 'released' {
+  if (releaseDate && releaseDate <= new Date()) return 'released';
+  if (confidence === 'rumor') return 'rumor';
+  if (confidence === 'unconfirmed') return 'announced';
+  return 'official';
+}
+
 // ============================================
 // Get All Releases
 // ============================================
@@ -213,13 +247,54 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
       },
     });
 
-    // One card per (category, setName, productName); prefer Tier B (sourceUrl) over set_default
-    const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
+    // One card per logical product. Use canonicalized set keys to collapse naming variants
+    // like "Ascended Heroes (Mega Evolution)" vs "Mega Evolution—Ascended Heroes".
+    const normalize = (s: string) =>
+      (s || '')
+        .toLowerCase()
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&mdash;|&#8212;|&#x2014;/gi, '—')
+        .replace(/&ndash;|&#8211;|&#x2013;/gi, '–')
+        .replace(/[^\w\s]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const canonicalSetName = (name: string): string => {
+      const n = normalize(name);
+      const m = n.match(/^(.+?)\s*\((.+?)\)$/);
+      if (!m) return n;
+      const left = m[1].trim();
+      const right = m[2].trim();
+      // Sort components so "foo (bar)" and "bar—foo" share a stable key.
+      return [left, right].sort().join(' ');
+    };
+    const productIdentity = (p: (typeof allProducts)[0]): string => {
+      if (p.productType === 'set_default') return 'set_default';
+      return normalize(p.productType || p.name || 'unknown');
+    };
+    const productCompletenessScore = (p: (typeof allProducts)[0]): number => {
+      let score = 0;
+      if (p.msrp != null) score += 1;
+      if (p.estimatedResale != null) score += 1;
+      if (p.buyUrl) score += 1;
+      if (p.contentsSummary) score += 1;
+      if (p.sourceUrl) score += 1;
+      if (p.strategies && p.strategies.length > 0) score += 1;
+      if (p.productType !== 'set_default') score += 1;
+      return score;
+    };
     const seen = new Map<string, (typeof allProducts)[0]>();
     for (const p of allProducts) {
-      const key = `${p.category}|${normalize(p.release.name)}|${normalize(p.name)}`;
+      const key = `${p.category}|${canonicalSetName(p.release.name)}|${productIdentity(p)}`;
       const existing = seen.get(key);
-      const preferThis = !existing || (p.sourceUrl != null && existing.productType === 'set_default');
+      if (!existing) {
+        seen.set(key, p);
+        continue;
+      }
+      const thisScore = productCompletenessScore(p);
+      const existingScore = productCompletenessScore(existing);
+      const preferThis =
+        thisScore > existingScore ||
+        (thisScore === existingScore && p.updatedAt > existing.updatedAt);
       if (preferThis) seen.set(key, p);
     }
     const deduped = Array.from(seen.values());
@@ -244,6 +319,9 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
         setName: product.release.name,
         setHypeScore: product.release.hypeScore ? Number(product.release.hypeScore) : undefined,
         confidence: product.confidence,
+        confidenceScore: deriveConfidenceScore(product.confidence, product.sourceTier as 'A' | 'B' | 'C' | null),
+        sourceType: deriveSourceType(product.sourceUrl),
+        status: deriveStatus(product.releaseDate, product.confidence),
         sourceUrl: product.sourceUrl ?? undefined,
         strategy: latestStrategy
           ? {

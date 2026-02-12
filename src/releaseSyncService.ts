@@ -474,7 +474,7 @@ async function ensureDefaultReleaseProduct(
       buyUrl = links.buyUrl;
       sourceUrl = links.sourceUrl;
     }
-    if (estimatedResale == null && release.msrp != null) {
+    if (tierAMeta.category !== 'pokemon' && estimatedResale == null && release.msrp != null) {
       estimatedResale = tierAEstimatedResale(release.msrp);
     }
   }
@@ -483,7 +483,9 @@ async function ensureDefaultReleaseProduct(
     name: `${release.name} - Booster Product`,
     productType: 'set_default' as const,
     category: release.category,
-    msrp: release.msrp,
+    // set_default from Tier A is a set-level placeholder, not a specific SKU.
+    // Avoid showing misleading hardcoded MSRP values on these placeholders.
+    msrp: tierAMeta?.category === 'pokemon' ? null : release.msrp,
     estimatedResale,
     releaseDate: release.releaseDate,
     preorderDate: null as Date | null,
@@ -541,7 +543,11 @@ export async function backfillTierALinks(): Promise<number> {
           ? 'https://scryfall.com/sets'
           : null;
     const estimatedResale =
-      p.msrp != null ? Math.round(p.msrp * 1.08 * 100) / 100 : null;
+      p.release.category === 'pokemon'
+        ? null
+        : p.msrp != null
+          ? Math.round(p.msrp * 1.08 * 100) / 100
+          : null;
 
     await prisma.releaseProduct.update({
       where: { id: p.id },

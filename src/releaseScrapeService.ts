@@ -5,7 +5,12 @@
 
 import { PrismaClient, Category, SourceTier, Confidence } from '@prisma/client';
 import axios from 'axios';
-import { getScrapeSources, type SourceTierType } from './releaseIntelSources';
+import {
+  getScrapeSources,
+  type ReleaseIntelSource,
+  type SourceTierType,
+  type SourceType,
+} from './releaseIntelSources';
 import { generateReleaseStrategyForProductId } from './releaseStrategyService';
 
 const prisma = new PrismaClient();
@@ -44,6 +49,13 @@ export interface ExtractedSet {
 
 export interface ExtractedPayload {
   releases: ExtractedSet[];
+}
+
+interface ExtractedSetCandidate {
+  setName: string;
+  category: Category;
+  products: ExtractedProduct[];
+  source: ReleaseIntelSource;
 }
 
 interface PokemonComExpansionItem {
@@ -301,7 +313,11 @@ function buildExtractionInput(html: string): string {
   return `${html.slice(0, half)}\n...[middle truncated]...\n${html.slice(-half)}`;
 }
 
-async function extractWithOpenAi(html: string, sourceLabel: string): Promise<ExtractedPayload> {
+async function extractWithOpenAi(
+  html: string,
+  sourceLabel: string,
+  expectedCategory?: Category,
+): Promise<ExtractedPayload> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.warn('⚠️ OPENAI_API_KEY not set; skipping AI extraction');
@@ -319,7 +335,7 @@ async function extractWithOpenAi(html: string, sourceLabel: string): Promise<Ext
       { role: 'system', content: EXTRACTION_SYSTEM },
       {
         role: 'user',
-        content: `Source: ${sourceLabel}\n\nExtract release and product data from this HTML:\n\n${extractionInput}`,
+        content: `Source: ${sourceLabel}\nExpected TCG category: ${expectedCategory || 'unknown'}\n\nExtract release and product data from this HTML:\n\n${extractionInput}`,
       },
     ],
     response_format: { type: 'json_object' },
@@ -337,6 +353,48 @@ async function extractWithOpenAi(html: string, sourceLabel: string): Promise<Ext
     console.error('Failed to parse OpenAI extraction JSON:', content?.slice(0, 200));
     return { releases: [] };
   }
+}
+
+function sourceTierRank(tier: SourceTierType): number {
+  if (tier === 'A') return 3;
+  if (tier === 'B') return 2;
+  return 1;
+}
+
+function sourceTypeWeight(sourceType: SourceType): number {
+  switch (sourceType) {
+    case 'official':
+      return 10;
+    case 'distributor':
+      return 6;
+    case 'retailer':
+      return 4;
+    case 'news':
+      return 0;
+    case 'community':
+      return -8;
+    default:
+      return 0;
+  }
+}
+
+function computeConfidenceScore(
+  source: ReleaseIntelSource,
+  corroborationCount: number,
+  lastSeenAt: Date,
+): number {
+  const tierBase = source.tier === 'A' ? 72 : source.tier === 'B' ? 56 : 38;
+  const corroborationBonus = Math.min(20, Math.max(0, corroborationCount - 1) * 8);
+  const ageDays = Math.max(0, Math.floor((Date.now() - lastSeenAt.getTime()) / (1000 * 60 * 60 * 24)));
+  const recencyPenalty = Math.min(15, ageDays);
+  const score = tierBase + sourceTypeWeight(source.sourceType) + corroborationBonus - recencyPenalty;
+  return Math.max(5, Math.min(99, score));
+}
+
+function confidenceEnumFromScore(score: number): Confidence {
+  if (score >= 75) return Confidence.confirmed;
+  if (score >= 50) return Confidence.unconfirmed;
+  return Confidence.rumor;
 }
 
 // ============================================
@@ -547,7 +605,13 @@ async function recordChange(
 async function upsertProductsForSet(
   release: { id: string; category: Category },
   products: ExtractedProduct[],
-  sourceConfig: { url: string; tier: SourceTierType },
+  sourceConfig: {
+    url: string;
+    tier: SourceTierType;
+    confidence: Confidence;
+    supportingSources?: string[];
+    sourceType?: SourceType;
+  },
 ): Promise<{ upserted: number; changes: number }> {
   let upserted = 0;
   let changesCount = 0;
@@ -578,6 +642,11 @@ async function upsertProductsForSet(
         ? `${p.contentsSummary} ${topChasesSummary}`
         : p.contentsSummary || topChasesSummary || null;
 
+    const sourceEvidence =
+      sourceConfig.supportingSources && sourceConfig.supportingSources.length > 1
+        ? ` Sources: ${sourceConfig.supportingSources.join(', ')}.`
+        : '';
+
     const data = {
       name: p.name.trim(),
       productType: mapProductType(p.productType || 'other'),
@@ -588,10 +657,12 @@ async function upsertProductsForSet(
       preorderDate,
       imageUrl: p.imageUrl ?? null,
       buyUrl: p.buyUrl ?? null,
-      contentsSummary: combinedContentsSummary,
+      contentsSummary: combinedContentsSummary
+        ? `${combinedContentsSummary}${sourceEvidence}`
+        : sourceEvidence || null,
       sourceTier: tier,
       sourceUrl,
-      confidence: sourceConfig.tier === 'C' ? Confidence.rumor : Confidence.confirmed,
+      confidence: sourceConfig.confidence,
     };
 
     if (existing) {
@@ -651,6 +722,7 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
   let totalProductsUpserted = 0;
   let totalChanges = 0;
   let totalStrategies = 0;
+  const candidates: ExtractedSetCandidate[] = [];
 
   for (let i = 0; i < sources.length; i++) {
     const source = sources[i];
@@ -674,7 +746,7 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
         payload = parsePokemonComSetPage(html, source.url);
       } else {
         const html = await fetchHtml(source.url);
-        payload = await extractWithOpenAi(html, source.name);
+        payload = await extractWithOpenAi(html, source.name, source.category);
       }
 
       if (!payload.releases?.length) {
@@ -683,8 +755,8 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
       }
 
       for (const set of payload.releases) {
-        const category = set.category as Category;
-        const products =
+        const category = (set.category || source.category) as Category;
+        const products: ExtractedProduct[] =
           Array.isArray(set.products) && set.products.length > 0
             ? set.products
             : [
@@ -694,33 +766,110 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
                   contentsSummary: 'Set-level fallback product inferred from expansion page.',
                 },
               ];
-        const release = await ensureReleaseForSet(set.setName, category, products);
-        const beforeStrategies = await (prisma as any).releaseProductStrategy.count({
-          where: { releaseProduct: { releaseId: release.id } },
+        candidates.push({
+          setName: set.setName,
+          category,
+          products,
+          source,
         });
-
-        const { upserted, changes } = await upsertProductsForSet(release, products, {
-          url: source.url,
-          tier: source.tier,
-        });
-        totalProductsUpserted += upserted;
-        totalChanges += changes;
-
-        if (release.category === 'pokemon') {
-          const afterStrategies = await (prisma as any).releaseProductStrategy.count({
-            where: { releaseProduct: { releaseId: release.id } },
-          });
-          const generatedForSet = Math.max(0, afterStrategies - beforeStrategies);
-          if (generatedForSet > 0) {
-            console.log(
-              `   Strategies generated for set "${set.setName}" (${release.id}): ${generatedForSet}`,
-            );
-            totalStrategies += generatedForSet;
-          }
-        }
       }
     } catch (err) {
       console.error(`❌ Scrape failed for ${source.url}:`, err);
+    }
+  }
+
+  // Merge corroborating candidates across sources into one logical set payload.
+  const normalizeSetKey = (name: string) =>
+    normalizeForMatch(name)
+      .replace(/^pokemon tcg\s+/i, '')
+      .replace(/^magic the gathering\s+/i, '')
+      .trim();
+  const grouped = new Map<string, ExtractedSetCandidate[]>();
+  for (const c of candidates) {
+    const key = `${c.category}|${normalizeSetKey(c.setName)}`;
+    const list = grouped.get(key) || [];
+    list.push(c);
+    grouped.set(key, list);
+  }
+
+  const rankSource = (s: ReleaseIntelSource): number =>
+    sourceTierRank(s.tier) * 100 + sourceTypeWeight(s.sourceType);
+
+  for (const [_, group] of grouped.entries()) {
+    if (group.length === 0) continue;
+    const sortedByTrust = [...group].sort((a, b) => rankSource(b.source) - rankSource(a.source));
+    const primary = sortedByTrust[0];
+
+    // Merge products by normalized name, preferring stronger source for conflicting fields.
+    const mergedByProduct = new Map<string, ExtractedProduct>();
+    for (const candidate of sortedByTrust) {
+      for (const rawProduct of candidate.products) {
+        const productName = rawProduct.name?.trim() || candidate.setName;
+        const productKey = normalizeForMatch(productName || candidate.setName || 'set-default');
+        const existing = mergedByProduct.get(productKey);
+        if (!existing) {
+          mergedByProduct.set(productKey, {
+            name: productName,
+            productType: rawProduct.productType || 'set_default',
+            msrp: rawProduct.msrp,
+            estimatedResale: rawProduct.estimatedResale,
+            releaseDate: rawProduct.releaseDate,
+            preorderDate: rawProduct.preorderDate,
+            imageUrl: rawProduct.imageUrl,
+            buyUrl: rawProduct.buyUrl,
+            contentsSummary: rawProduct.contentsSummary,
+            topChases: rawProduct.topChases,
+          });
+          continue;
+        }
+        mergedByProduct.set(productKey, {
+          ...existing,
+          msrp: existing.msrp ?? rawProduct.msrp,
+          estimatedResale: existing.estimatedResale ?? rawProduct.estimatedResale,
+          releaseDate: existing.releaseDate ?? rawProduct.releaseDate,
+          preorderDate: existing.preorderDate ?? rawProduct.preorderDate,
+          imageUrl: existing.imageUrl ?? rawProduct.imageUrl,
+          buyUrl: existing.buyUrl ?? rawProduct.buyUrl,
+          contentsSummary: existing.contentsSummary ?? rawProduct.contentsSummary,
+          topChases:
+            existing.topChases && existing.topChases.length > 0
+              ? existing.topChases
+              : rawProduct.topChases,
+        });
+      }
+    }
+
+    const mergedProducts = Array.from(mergedByProduct.values());
+    const supportingSourceNames = Array.from(new Set(group.map((g) => g.source.name)));
+    const confidenceScore = computeConfidenceScore(primary.source, supportingSourceNames.length, new Date());
+    const confidence = confidenceEnumFromScore(confidenceScore);
+
+    const release = await ensureReleaseForSet(primary.setName, primary.category, mergedProducts);
+    const beforeStrategies = await (prisma as any).releaseProductStrategy.count({
+      where: { releaseProduct: { releaseId: release.id } },
+    });
+
+    const { upserted, changes } = await upsertProductsForSet(release, mergedProducts, {
+      url: primary.source.url,
+      tier: primary.source.tier,
+      confidence,
+      supportingSources: supportingSourceNames,
+      sourceType: primary.source.sourceType,
+    });
+    totalProductsUpserted += upserted;
+    totalChanges += changes;
+
+    if (release.category === 'pokemon') {
+      const afterStrategies = await (prisma as any).releaseProductStrategy.count({
+        where: { releaseProduct: { releaseId: release.id } },
+      });
+      const generatedForSet = Math.max(0, afterStrategies - beforeStrategies);
+      if (generatedForSet > 0) {
+        console.log(
+          `   Strategies generated for set "${primary.setName}" (${release.id}): ${generatedForSet}`,
+        );
+        totalStrategies += generatedForSet;
+      }
     }
   }
 
