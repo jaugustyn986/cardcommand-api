@@ -61,6 +61,15 @@ export const RELEASE_INTEL_SOURCES: ReleaseIntelSource[] = [
     schedule: 'daily',
   },
   {
+    id: 'pokemon-com-perfect-order',
+    name: 'Pokémon.com Mega Evolution—Perfect Order',
+    url: 'https://www.pokemon.com/us/pokemon-tcg/mega-evolution-perfect-order',
+    tier: 'B',
+    category: 'pokemon',
+    enabled: true,
+    schedule: 'daily',
+  },
+  {
     id: 'pokemon-press-schedule',
     name: 'Pokémon Press TCG Schedule',
     url: 'https://press.pokemon.com/en/Items/Schedule/Pokemon-Trading-Card-Game',

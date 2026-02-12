@@ -12,6 +12,7 @@ const prisma = new PrismaClient();
 
 const USER_AGENT = 'Mozilla/5.0 (compatible; CardCommandBot/1.0; +https://cardcommand.vercel.app)';
 const RATE_LIMIT_MS = 1500;
+const EXTRACTION_MAX_INPUT_CHARS = 120_000;
 
 // ============================================
 // Extraction types (AI returns this shape)
@@ -148,7 +149,7 @@ const EXTRACTION_SYSTEM = `You are a data extractor for a trading card release c
       "products": [
         {
           "name": "Full product name (e.g. Ascended Heroes Elite Trainer Box)",
-          "productType": "elite_trainer_box | booster_box | booster_bundle | tin | collection | blister | build_battle | other",
+          "productType": "set_default | elite_trainer_box | booster_box | booster_bundle | tin | collection | blister | build_battle | other",
           "msrp": number or null,                 // Retail price printed or clearly labeled as MSRP / Manufacturer's suggested price
           "estimatedResale": number or null,      // Reasonable expected secondary-market price (if the page clearly implies it, otherwise null)
           "releaseDate": "YYYY-MM-DD or null",
@@ -166,12 +167,24 @@ const EXTRACTION_SYSTEM = `You are a data extractor for a trading card release c
 Rules:
 - Only include releases and products you can clearly identify from the page.
 - Use "pokemon" for Pokémon TCG, "mtg" for Magic, \"yugioh\" for Yu-Gi-Oh!, etc. If the game is unclear, omit that release.
-- productType must be one of: elite_trainer_box, booster_box, booster_bundle, tin, collection, blister, build_battle, other.
+- productType must be one of: set_default, elite_trainer_box, booster_box, booster_bundle, tin, collection, blister, build_battle, other.
+- If a page is expansion-level (set-level) and does not clearly list distinct sealed SKUs, include one fallback product with:
+  - name = setName
+  - productType = "set_default"
+  - releaseDate from the page when present
+  - imageUrl/buyUrl/contentsSummary when present.
 - Only set msrp when the page shows a clearly labeled retail / MSRP price for that specific product.
 - Only set estimatedResale when the page gives a clear, current market price signal (e.g. current price on a marketplace listing for a sealed product). Do NOT guess.
 - Only set buyUrl when there is a clear button or link to buy or preorder that exact product.
 - For topChases, only include specific card names that the page strongly highlights as key pulls or chase cards for this product. If you cannot find any, use an empty array.
 - Output only valid JSON, no other text.`;
+
+function buildExtractionInput(html: string): string {
+  if (html.length <= EXTRACTION_MAX_INPUT_CHARS) return html;
+  // Dynamic pages often place relevant data far from the beginning; include head + tail.
+  const half = Math.floor(EXTRACTION_MAX_INPUT_CHARS / 2);
+  return `${html.slice(0, half)}\n...[middle truncated]...\n${html.slice(-half)}`;
+}
 
 async function extractWithOpenAi(html: string, sourceLabel: string): Promise<ExtractedPayload> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -180,8 +193,7 @@ async function extractWithOpenAi(html: string, sourceLabel: string): Promise<Ext
     return { releases: [] };
   }
 
-  // Truncate HTML to stay under context limits (keep first ~80k chars)
-  const truncated = html.length > 80_000 ? html.slice(0, 80_000) + '\n...[truncated]' : html;
+  const extractionInput = buildExtractionInput(html);
 
   const OpenAI = (await import('openai')).default;
   const openai = new OpenAI({ apiKey });
@@ -192,7 +204,7 @@ async function extractWithOpenAi(html: string, sourceLabel: string): Promise<Ext
       { role: 'system', content: EXTRACTION_SYSTEM },
       {
         role: 'user',
-        content: `Source: ${sourceLabel}\n\nExtract release and product data from this HTML:\n\n${truncated}`,
+        content: `Source: ${sourceLabel}\n\nExtract release and product data from this HTML:\n\n${extractionInput}`,
       },
     ],
     response_format: { type: 'json_object' },
@@ -276,6 +288,77 @@ async function findReleaseForSet(setName: string, category: Category) {
     }
   }
   return best;
+}
+
+function manufacturerForCategory(category: Category): string {
+  switch (category) {
+    case 'pokemon':
+      return 'The Pokémon Company';
+    case 'mtg':
+      return 'Wizards of the Coast';
+    case 'yugioh':
+      return 'Konami';
+    default:
+      return 'Unknown';
+  }
+}
+
+function defaultMsrpForCategory(category: Category): number {
+  switch (category) {
+    case 'pokemon':
+      return 4.99;
+    case 'mtg':
+      return 5.99;
+    default:
+      return 9.99;
+  }
+}
+
+function inferReleaseDate(products: ExtractedProduct[]): Date | null {
+  for (const p of products) {
+    const d = parseDate(p.releaseDate);
+    if (d) return d;
+  }
+  return null;
+}
+
+function inferReleaseMsrp(category: Category, products: ExtractedProduct[]): number {
+  for (const p of products) {
+    if (typeof p.msrp === 'number' && Number.isFinite(p.msrp) && p.msrp > 0) {
+      return p.msrp;
+    }
+  }
+  return defaultMsrpForCategory(category);
+}
+
+async function ensureReleaseForSet(
+  setName: string,
+  category: Category,
+  products: ExtractedProduct[],
+): Promise<{ id: string; category: Category }> {
+  const existing = await findReleaseForSet(setName, category);
+  if (existing) return existing;
+
+  const inferredDate = inferReleaseDate(products) ?? new Date();
+  const created = await prisma.release.create({
+    data: {
+      name: setName,
+      releaseDate: inferredDate,
+      category,
+      manufacturer: manufacturerForCategory(category),
+      msrp: inferReleaseMsrp(category, products),
+      estimatedResale: null,
+      hypeScore: null,
+      imageUrl: null,
+      topChases: [],
+      printRun: null,
+      description: `Scraped release candidate for ${setName}.`,
+      isReleased: inferredDate <= new Date(),
+    },
+  });
+
+  console.log(`🆕 Created release from scrape: "${setName}" (${category})`);
+  return created;
 }
 
 // ============================================
@@ -476,16 +559,22 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
 
       for (const set of payload.releases) {
         const category = set.category as Category;
-        const release = await findReleaseForSet(set.setName, category);
-        if (!release) {
-          console.log(`   No matching release for set "${set.setName}" (${category}); skipping`);
-          continue;
-        }
-        const beforeStrategies = await prisma.releaseProductStrategy.count({
+        const products =
+          Array.isArray(set.products) && set.products.length > 0
+            ? set.products
+            : [
+                {
+                  name: set.setName,
+                  productType: 'set_default',
+                  contentsSummary: 'Set-level fallback product inferred from expansion page.',
+                },
+              ];
+        const release = await ensureReleaseForSet(set.setName, category, products);
+        const beforeStrategies = await (prisma as any).releaseProductStrategy.count({
           where: { releaseProduct: { releaseId: release.id } },
         });
 
-        const { upserted, changes } = await upsertProductsForSet(release, set.products || [], {
+        const { upserted, changes } = await upsertProductsForSet(release, products, {
           url: source.url,
           tier: source.tier,
         });
@@ -493,7 +582,7 @@ export async function scrapeAndUpsertReleaseProducts(): Promise<ScrapeResult> {
         totalChanges += changes;
 
         if (release.category === 'pokemon') {
-          const afterStrategies = await prisma.releaseProductStrategy.count({
+          const afterStrategies = await (prisma as any).releaseProductStrategy.count({
             where: { releaseProduct: { releaseId: release.id } },
           });
           const generatedForSet = Math.max(0, afterStrategies - beforeStrategies);
