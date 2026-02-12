@@ -31,6 +31,96 @@ interface PokemonSet {
     symbol: string;
     logo: string;
   };
+  sourceUrl?: string;
+}
+
+interface PokemonComExpansion {
+  title: string;
+  url: string;
+  system?: string;
+  releaseDate?: string;
+  thumbnail?: string;
+}
+
+function normalizeForMatch(s: string): string {
+  return (s || '')
+    .toLowerCase()
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&mdash;|&#8212;|&#x2014;/gi, '—')
+    .replace(/&ndash;|&#8211;|&#x2013;/gi, '–')
+    .replace(/&amp;/gi, '&')
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function cleanHtmlText(input: string): string {
+  return (input || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&mdash;|&#8212;|&#x2014;/gi, '—')
+    .replace(/&ndash;|&#8211;|&#x2013;/gi, '–')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function toAbsolutePokemonUrl(pathOrUrl?: string): string {
+  if (!pathOrUrl) return 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions';
+  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) return pathOrUrl;
+  if (pathOrUrl.startsWith('/')) return `https://www.pokemon.com${pathOrUrl}`;
+  return `https://www.pokemon.com/${pathOrUrl}`;
+}
+
+function canonicalPokemonReleaseName(set: PokemonSet): string {
+  const name = cleanHtmlText(set.name);
+  const series = cleanHtmlText(set.series || '').replace(/\s+series$/i, '').trim();
+  if (!series) return name;
+  const n = normalizeForMatch(name);
+  const s = normalizeForMatch(series);
+  if (!n || !s) return name;
+  if (n.includes(s)) return name;
+  return `${name} (${series})`;
+}
+
+async function fetchPokemonComExpansionSets(): Promise<PokemonSet[]> {
+  try {
+    const { data } = await axios.get<PokemonComExpansion[]>('https://www.pokemon.com/api/1/us/expansions', {
+      timeout: 15000,
+      headers: { Accept: 'application/json' },
+    });
+    const items = Array.isArray(data) ? data : [];
+    return items
+      .map((item, idx) => {
+        const name = cleanHtmlText(item.title || '').replace(/^Pok[eé]mon\s+TCG:\s*/i, '').trim();
+        const series = cleanHtmlText(item.system || 'Pokemon');
+        const releaseDate = item.releaseDate && !isNaN(new Date(item.releaseDate).getTime())
+          ? new Date(item.releaseDate).toISOString().slice(0, 10)
+          : '';
+        if (!name || !releaseDate) return null;
+        return {
+          id: `pokemoncom-${idx}-${name.toLowerCase().replace(/\s+/g, '-')}`,
+          name,
+          series,
+          printedTotal: 0,
+          total: 0,
+          legalities: {},
+          releaseDate,
+          updatedAt: new Date().toISOString(),
+          images: {
+            symbol: '',
+            logo: toAbsolutePokemonUrl(item.thumbnail),
+          },
+          sourceUrl: toAbsolutePokemonUrl(item.url),
+        } as PokemonSet;
+      })
+      .filter((s): s is PokemonSet => s != null);
+  } catch (error) {
+    console.error('⚠️ Pokémon.com expansions API fetch failed:', error);
+    return [];
+  }
 }
 
 export async function syncPokemonReleases(): Promise<number> {
@@ -43,24 +133,63 @@ export async function syncPokemonReleases(): Promise<number> {
       },
     });
 
-    const sets: PokemonSet[] = response.data.data;
+    const apiSets: PokemonSet[] = response.data.data;
+    const pokemonComSets = await fetchPokemonComExpansionSets();
+
+    // Merge by normalized set name so we keep API richness + Pokémon.com canonical/forward-looking entries.
+    const mergedByName = new Map<string, PokemonSet>();
+    for (const s of apiSets) {
+      mergedByName.set(normalizeForMatch(s.name), s);
+    }
+    for (const s of pokemonComSets) {
+      const key = normalizeForMatch(s.name);
+      const existing = mergedByName.get(key);
+      if (!existing) {
+        mergedByName.set(key, s);
+      } else {
+        // Fill canonical source URL/logo/date where useful.
+        mergedByName.set(key, {
+          ...existing,
+          sourceUrl: s.sourceUrl || existing.sourceUrl,
+          releaseDate: s.releaseDate || existing.releaseDate,
+          images: {
+            symbol: existing.images?.symbol || '',
+            logo: s.images?.logo || existing.images?.logo,
+          },
+          series: existing.series || s.series,
+        });
+      }
+    }
+
+    const sets = Array.from(mergedByName.values());
     let syncedCount = 0;
+    const existingReleases = await prisma.release.findMany({
+      where: { category: 'pokemon' },
+      select: { id: true, name: true, releaseDate: true },
+    });
 
     for (const set of sets) {
       // Skip if release is too old (older than 1 year)
       const releaseDate = new Date(set.releaseDate);
+      if (isNaN(releaseDate.getTime())) continue;
       const oneYearAgo = new Date();
       oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
       
       if (releaseDate < oneYearAgo) continue;
 
-      // Check if release already exists (we store name as "Name (Series)" so match both)
-      const possibleNames = [set.name, `${set.name} (${set.series})`];
-      const existingRelease = await prisma.release.findFirst({
-        where: {
-          name: { in: possibleNames },
-          category: 'pokemon',
-        },
+      const canonicalName = canonicalPokemonReleaseName(set);
+      const setNorm = normalizeForMatch(set.name);
+      const canonicalNorm = normalizeForMatch(canonicalName);
+
+      // Normalize-based match to prevent duplicate releases from small name format differences.
+      const existingRelease = existingReleases.find((r) => {
+        const rNorm = normalizeForMatch(r.name);
+        return (
+          rNorm === setNorm ||
+          rNorm === canonicalNorm ||
+          rNorm.includes(setNorm) ||
+          setNorm.includes(rNorm)
+        );
       });
 
       if (existingRelease) {
@@ -78,22 +207,25 @@ export async function syncPokemonReleases(): Promise<number> {
         // Create new release
         const newRelease = await prisma.release.create({
           data: {
-            name: `${set.name} (${set.series})`,
+            name: canonicalName,
             releaseDate: releaseDate,
             category: 'pokemon',
             manufacturer: 'The Pokémon Company',
             msrp: estimateMsrp('pokemon', set.name),
             estimatedResale: null,
             hypeScore: calculateHypeScore(set),
-            imageUrl: set.images.logo,
+            imageUrl: set.images?.logo || null,
             topChases: [], // Would need card data to populate
-            printRun: `${set.printedTotal} cards`,
-            description: `Pokemon TCG set from the ${set.series} series. Contains ${set.total} cards.`,
+            printRun: set.printedTotal > 0 ? `${set.printedTotal} cards` : null,
+            description: set.total > 0
+              ? `Pokemon TCG set from the ${set.series} series. Contains ${set.total} cards.`
+              : `Pokemon TCG set from the ${set.series} series.`,
             isReleased: releaseDate <= new Date(),
           },
         });
         await ensureDefaultReleaseProduct(newRelease, { category: 'pokemon', set });
         syncedCount++;
+        existingReleases.push({ id: newRelease.id, name: newRelease.name, releaseDate: newRelease.releaseDate });
       }
     }
 
@@ -297,7 +429,7 @@ function tierALinksForPokemon(set: PokemonSet): { buyUrl: string; sourceUrl: str
   const q = encodeURIComponent(set.name);
   return {
     buyUrl: `https://www.tcgplayer.com/search/pokemon/product?q=${q}`,
-    sourceUrl: 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions',
+    sourceUrl: set.sourceUrl || 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions',
   };
 }
 
