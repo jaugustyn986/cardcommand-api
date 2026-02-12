@@ -260,12 +260,12 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
         .trim();
     const canonicalSetName = (name: string): string => {
       const n = normalize(name);
-      const m = n.match(/^(.+?)\s*\((.+?)\)$/);
-      if (!m) return n;
-      const left = m[1].trim();
-      const right = m[2].trim();
-      // Sort components so "foo (bar)" and "bar—foo" share a stable key.
-      return [left, right].sort().join(' ');
+      const tokens = n
+        .split(' ')
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .filter((t) => !['pokemon', 'tcg'].includes(t));
+      return Array.from(new Set(tokens)).sort().join(' ');
     };
     const productIdentity = (p: (typeof allProducts)[0]): string => {
       if (p.productType === 'set_default') return 'set_default';
@@ -309,8 +309,14 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
         name: product.name,
         productType: product.productType,
         category: product.category,
-        msrp: product.msrp ?? undefined,
-        estimatedResale: product.estimatedResale ?? undefined,
+        msrp:
+          product.category === 'pokemon' && product.productType === 'set_default'
+            ? undefined
+            : product.msrp ?? undefined,
+        estimatedResale:
+          product.category === 'pokemon' && product.productType === 'set_default'
+            ? undefined
+            : product.estimatedResale ?? undefined,
         releaseDate: product.releaseDate ? product.releaseDate.toISOString() : undefined,
         preorderDate: product.preorderDate ? product.preorderDate.toISOString() : undefined,
         imageUrl: product.imageUrl ?? product.release.imageUrl ?? undefined,

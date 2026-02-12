@@ -4,7 +4,7 @@
 // Used by both admin endpoint and scheduled cron
 // ============================================
 
-import { syncAllReleases, backfillTierALinks } from './releaseSyncService';
+import { syncAllReleases, backfillTierALinks, backfillPokemonSetDefaultPricing } from './releaseSyncService';
 import { scrapeAndUpsertReleaseProducts } from './releaseScrapeService';
 import { backfillStrategiesForPokemon } from './releaseStrategyService';
 
@@ -12,6 +12,7 @@ export interface SyncPipelineResult {
   pokemon: number;
   mtg: number;
   tierALinksBackfilled: number;
+  pokemonSetPricingCleaned: number;
   scrape?: {
     sources: number;
     productsUpserted: number;
@@ -29,6 +30,13 @@ export async function runReleaseSyncPipeline(): Promise<SyncPipelineResult> {
     tierALinksBackfilled = await backfillTierALinks();
   } catch (err) {
     console.error('⚠️ Tier A links backfill failed:', err);
+  }
+
+  let pokemonSetPricingCleaned = 0;
+  try {
+    pokemonSetPricingCleaned = await backfillPokemonSetDefaultPricing();
+  } catch (err) {
+    console.error('⚠️ Pokémon set_default pricing cleanup failed:', err);
   }
 
   let scrapeResult: SyncPipelineResult['scrape'];
@@ -51,6 +59,7 @@ export async function runReleaseSyncPipeline(): Promise<SyncPipelineResult> {
   return {
     ...results,
     tierALinksBackfilled,
+    pokemonSetPricingCleaned,
     scrape: scrapeResult,
     strategiesBackfilled,
   };

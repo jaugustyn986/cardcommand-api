@@ -566,3 +566,29 @@ export async function backfillTierALinks(): Promise<number> {
   return updated;
 }
 
+/** Remove misleading price placeholders for Pokémon set-level defaults (not SKU-level products). */
+export async function backfillPokemonSetDefaultPricing(): Promise<number> {
+  const products = await prisma.releaseProduct.findMany({
+    where: {
+      category: 'pokemon',
+      productType: 'set_default',
+      sourceTier: SourceTier.A,
+      OR: [{ msrp: { not: null } }, { estimatedResale: { not: null } }],
+    },
+    select: { id: true },
+  });
+
+  for (const p of products) {
+    await prisma.releaseProduct.update({
+      where: { id: p.id },
+      data: { msrp: null, estimatedResale: null },
+    });
+  }
+
+  if (products.length > 0) {
+    console.log(`✅ Pokémon set_default pricing cleanup: cleared price fields on ${products.length} products`);
+  }
+
+  return products.length;
+}
+
