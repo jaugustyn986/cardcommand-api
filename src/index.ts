@@ -12,6 +12,7 @@ import { connectDatabase, disconnectDatabase, isConnected } from './config/datab
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import { prisma } from './config/database';
 import { startReleaseSyncCron } from './jobs/releaseSyncJob';
+import { startTcgSyncCron } from './jobs/tcgSyncJob';
 import type { Category, Liquidity } from '@prisma/client';
 
 const app = express();
@@ -278,6 +279,7 @@ async function startServer() {
 
   // Start release sync cron (6:00, 12:00, 18:00 UTC)
   startReleaseSyncCron();
+  startTcgSyncCron();
 
   // Start server
   app.listen(PORT, () => {

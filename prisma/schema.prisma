@@ -270,3 +270,128 @@ model TrendingItem {
 
   @@map("trending_items")
 }
+
+// ============================================
+// TCG Data Layer (Provider-agnostic catalog + pricing)
+// ============================================
+
+model Game {
+  id          String    @id @default(uuid())
+  slug        String    @unique
+  name        String
+  enabled     Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  sets        TcgSet[]
+  cards       TcgCard[]
+
+  @@map("games")
+}
+
+model TcgSet {
+  id             String    @id @default(uuid())
+  gameId         String    @map("game_id")
+  provider       String
+  providerSetId  String    @map("provider_set_id")
+  name           String
+  releaseDate    DateTime? @map("release_date")
+  series         String?
+  total          Int?
+  images         Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  game           Game      @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  cards          TcgCard[]
+
+  @@unique([gameId, provider, providerSetId])
+  @@index([gameId, releaseDate(sort: Desc)])
+  @@index([provider, providerSetId])
+  @@map("tcg_sets")
+}
+
+model TcgCard {
+  id              String      @id @default(uuid())
+  gameId          String      @map("game_id")
+  setId           String      @map("set_id")
+  provider        String
+  providerCardId  String      @map("provider_card_id")
+  name            String
+  number          String?
+  rarity          String?
+  images          Json?
+  tcgplayerId     String?     @map("tcgplayer_id")
+  scryfallId      String?     @map("scryfall_id")
+  createdAt       DateTime    @default(now()) @map("created_at")
+  updatedAt       DateTime    @updatedAt @map("updated_at")
+
+  game            Game        @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  set             TcgSet      @relation(fields: [setId], references: [id], onDelete: Cascade)
+  latestPrices    PriceLatest[]
+  priceHistory    PriceHistoryDaily[]
+
+  @@unique([gameId, provider, providerCardId])
+  @@index([setId, rarity])
+  @@index([name])
+  @@index([tcgplayerId])
+  @@index([scryfallId])
+  @@map("tcg_cards")
+}
+
+model PriceLatest {
+  id          String    @id @default(uuid())
+  cardId      String    @map("card_id")
+  source      String
+  currency    String    @default("USD")
+  market      Float?
+  low         Float?
+  mid         Float?
+  high        Float?
+  directLow   Float?    @map("direct_low")
+  updatedAt   DateTime  @default(now()) @map("updated_at")
+
+  card        TcgCard   @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([cardId, source, currency])
+  @@index([updatedAt(sort: Desc)])
+  @@map("price_latest")
+}
+
+model PriceHistoryDaily {
+  id          String    @id @default(uuid())
+  cardId      String    @map("card_id")
+  source      String
+  date        DateTime
+  market      Float?
+  low         Float?
+  mid         Float?
+  high        Float?
+  directLow   Float?    @map("direct_low")
+  currency    String    @default("USD")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  card        TcgCard   @relation(fields: [cardId], references: [id], onDelete: Cascade)
+
+  @@unique([cardId, source, currency, date])
+  @@index([date(sort: Desc)])
+  @@map("price_history_daily")
+}
+
+model ProviderRawCache {
+  id            String    @id @default(uuid())
+  provider      String
+  gameSlug      String    @map("game_slug")
+  resourceType  String    @map("resource_type")
+  resourceKey   String    @map("resource_key")
+  payload       Json
+  fetchedAt     DateTime  @default(now()) @map("fetched_at")
+  expiresAt     DateTime? @map("expires_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@unique([provider, gameSlug, resourceType, resourceKey])
+  @@index([gameSlug, resourceType])
+  @@index([expiresAt])
+  @@map("provider_raw_cache")
+}

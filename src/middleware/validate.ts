@@ -118,4 +118,38 @@ export const schemas = {
       notificationChannels: z.array(z.string()).optional(),
     }),
   },
+
+  tcgGameParam: {
+    params: z.object({
+      game: z.enum(['pokemon', 'mtg', 'yugioh']),
+    }),
+  },
+
+  tcgSetsQuery: {
+    query: z.object({
+      sort: z.enum(['release_date_desc', 'release_date_asc']).optional(),
+      page: z.string().optional(),
+      perPage: z.string().optional(),
+    }),
+  },
+
+  tcgSetCardsQuery: {
+    query: z.object({
+      query: z.string().optional(),
+      rarity: z.string().optional(),
+      page: z.string().optional(),
+      perPage: z.string().optional(),
+    }),
+    params: z.object({
+      game: z.enum(['pokemon', 'mtg', 'yugioh']),
+      setId: z.string().min(1),
+    }),
+  },
+
+  tcgCardParams: {
+    params: z.object({
+      game: z.enum(['pokemon', 'mtg', 'yugioh']),
+      cardId: z.string().min(1),
+    }),
+  },
 };

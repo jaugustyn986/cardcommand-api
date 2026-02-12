@@ -3,6 +3,20 @@ import { PrismaClient } from '@prisma/client';
 const prisma = new PrismaClient();
 
 async function main() {
+  const games = [
+    { slug: 'pokemon', name: 'Pokemon TCG', enabled: true },
+    { slug: 'mtg', name: 'Magic: The Gathering', enabled: false },
+    { slug: 'yugioh', name: 'Yu-Gi-Oh!', enabled: false },
+  ];
+
+  for (const game of games) {
+    await prisma.game.upsert({
+      where: { slug: game.slug },
+      update: { name: game.name, enabled: game.enabled },
+      create: game,
+    });
+  }
+
   // Create sample deals
   const deals = [
     {
@@ -90,6 +104,7 @@ async function main() {
     });
   }
 
+  console.log('✅ Seeded games:', games.length);
   console.log('✅ Seeded deals:', deals.length);
 }
 

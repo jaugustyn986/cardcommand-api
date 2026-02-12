@@ -11,6 +11,7 @@ import * as portfolioController from '../controllers/portfolioController';
 import * as releasesController from '../controllers/releasesController';
 import * as trendingController from '../controllers/trendingController';
 import * as adminController from '../controllers/adminController';
+import * as tcgController from '../controllers/tcgController';
 
 const router = Router();
 
@@ -85,5 +86,19 @@ router.patch('/user/preferences', authenticateToken, validate(schemas.updatePref
 router.post('/admin/releases/sync', authenticateToken, adminController.triggerReleaseSync);
 router.get('/admin/releases/status', authenticateToken, adminController.getSyncStatus);
 router.get('/admin/health', adminController.getApiHealth);
+
+// ============================================
+// TCG Data Layer Routes
+// ============================================
+
+router.get('/tcg/games', optionalAuth, tcgController.getGames);
+router.get('/tcg/:game/sets', optionalAuth, validate(schemas.tcgGameParam), validate(schemas.tcgSetsQuery), tcgController.getSets);
+router.get(
+  '/tcg/:game/sets/:setId/cards',
+  optionalAuth,
+  validate(schemas.tcgSetCardsQuery),
+  tcgController.getSetCards,
+);
+router.get('/tcg/:game/cards/:cardId', optionalAuth, validate(schemas.tcgCardParams), tcgController.getCard);
 
 export default router;
