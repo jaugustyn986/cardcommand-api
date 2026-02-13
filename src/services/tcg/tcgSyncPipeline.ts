@@ -11,6 +11,8 @@ const DEFAULT_CARD_PAGE_SIZE = 250;
 export interface TcgSyncResult {
   game: SupportedGameSlug;
   setsSynced: number;
+  setsProcessedForCards: number;
+  setCardFailures: Array<{ providerSetId: string; error: string }>;
   cardsSynced: number;
   pricesSynced: number;
 }
@@ -60,23 +62,31 @@ export async function syncCardsForNewOrRecentSets(game: SupportedGameSlug): Prom
     dbSets,
     tcgConfig.cardSyncConcurrency,
     async (set) => {
-      if (set.provider !== provider.providerKey) return [];
-      const cards: Awaited<ReturnType<typeof provider.listCards>> = [];
-      let page = 1;
-      while (true) {
-        const pageCards = await provider.listCards(game, set.providerSetId, {
-          page,
-          pageSize: DEFAULT_CARD_PAGE_SIZE,
-        });
-        cards.push(...pageCards);
-        if (pageCards.length < DEFAULT_CARD_PAGE_SIZE) break;
-        page++;
+      if (set.provider !== provider.providerKey) {
+        return { providerSetId: set.providerSetId, cards: [], error: null as string | null };
       }
-      return cards;
+      const cards: Awaited<ReturnType<typeof provider.listCards>> = [];
+      try {
+        let page = 1;
+        while (true) {
+          const pageCards = await provider.listCards(game, set.providerSetId, {
+            page,
+            pageSize: DEFAULT_CARD_PAGE_SIZE,
+          });
+          cards.push(...pageCards);
+          if (pageCards.length < DEFAULT_CARD_PAGE_SIZE) break;
+          page++;
+        }
+        return { providerSetId: set.providerSetId, cards, error: null as string | null };
+      } catch (error: any) {
+        const msg = error?.message || 'Unknown set card fetch failure';
+        console.error(`⚠️ TCG cards fetch failed for set ${set.providerSetId}:`, msg);
+        return { providerSetId: set.providerSetId, cards: [], error: msg };
+      }
     },
   );
 
-  const cards = bySetCards.flat();
+  const cards = bySetCards.flatMap((entry) => entry.cards);
   await upsertCards(game, cards, setIdMap);
   return cards.length;
 }
@@ -126,9 +136,85 @@ export async function syncPricesRecent(game: SupportedGameSlug, recentOnly = tru
 }
 
 export async function runTcgSyncPipeline(game: SupportedGameSlug): Promise<TcgSyncResult> {
+  ensureRegistryInitialized();
+  if (!isGameEnabled(game)) {
+    return {
+      game,
+      setsSynced: 0,
+      setsProcessedForCards: 0,
+      setCardFailures: [],
+      cardsSynced: 0,
+      pricesSynced: 0,
+    };
+  }
+
   const setsSynced = await syncSets(game);
-  const cardsSynced = await syncCardsForNewOrRecentSets(game);
+  const provider = getProviderForGame(game);
+  const now = new Date();
+  const recentCutoff = new Date(now);
+  recentCutoff.setDate(recentCutoff.getDate() - tcgConfig.recentSetWindowDays);
+  const candidateSets = await prisma.tcgSet.findMany({
+    where: {
+      game: { slug: game },
+      provider: provider.providerKey,
+      OR: [{ releaseDate: { gte: recentCutoff } }, { releaseDate: null }],
+    },
+    select: { providerSetId: true },
+  });
+
+  const setCardFailures: Array<{ providerSetId: string; error: string }> = [];
+  const cardsSynced = await (async () => {
+    const dbSets = await prisma.tcgSet.findMany({
+      where: {
+        game: { slug: game },
+        provider: provider.providerKey,
+        OR: [{ releaseDate: { gte: recentCutoff } }, { releaseDate: null }],
+      },
+      orderBy: { releaseDate: 'desc' },
+      select: { id: true, providerSetId: true, provider: true },
+    });
+    const setIdMap = new Map(dbSets.map((s) => [s.providerSetId, s.id]));
+    const results = await runWithConcurrency(
+      dbSets,
+      tcgConfig.cardSyncConcurrency,
+      async (set) => {
+        const cards: Awaited<ReturnType<typeof provider.listCards>> = [];
+        try {
+          let page = 1;
+          while (true) {
+            const pageCards = await provider.listCards(game, set.providerSetId, {
+              page,
+              pageSize: DEFAULT_CARD_PAGE_SIZE,
+            });
+            cards.push(...pageCards);
+            if (pageCards.length < DEFAULT_CARD_PAGE_SIZE) break;
+            page++;
+          }
+          return { providerSetId: set.providerSetId, cards, error: null as string | null };
+        } catch (error: any) {
+          const msg = error?.message || 'Unknown set card fetch failure';
+          return { providerSetId: set.providerSetId, cards: [], error: msg };
+        }
+      },
+    );
+
+    for (const entry of results) {
+      if (entry.error) {
+        setCardFailures.push({ providerSetId: entry.providerSetId, error: entry.error });
+      }
+    }
+    const cards = results.flatMap((r) => r.cards);
+    await upsertCards(game, cards, setIdMap);
+    return cards.length;
+  })();
   const pricesSynced = await syncPricesRecent(game, true);
-  return { game, setsSynced, cardsSynced, pricesSynced };
+  return {
+    game,
+    setsSynced,
+    setsProcessedForCards: candidateSets.length,
+    setCardFailures,
+    cardsSynced,
+    pricesSynced,
+  };
 }
 

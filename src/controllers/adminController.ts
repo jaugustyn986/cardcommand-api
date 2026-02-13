@@ -4,11 +4,9 @@
 // ============================================
 
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
 import { runReleaseSyncPipeline } from '../releaseSyncPipeline';
 import { runTcgFullSync } from '../jobs/tcgSyncJob';
-
-const prisma = new PrismaClient();
+import { prisma } from '../config/database';
 
 // ============================================
 // Trigger Release Sync (Manual)
@@ -42,10 +40,11 @@ export async function triggerReleaseSync(req: Request, res: Response) {
 export async function triggerTcgSync(req: Request, res: Response) {
   try {
     console.log('🔄 Manual TCG sync triggered');
-    await runTcgFullSync();
+    const data = await runTcgFullSync();
     res.json({
       success: true,
       message: 'TCG sync completed',
+      data,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {

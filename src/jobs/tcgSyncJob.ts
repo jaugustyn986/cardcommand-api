@@ -1,5 +1,5 @@
 import cron from 'node-cron';
-import { runTcgSyncPipeline, syncCardsForNewOrRecentSets, syncPricesRecent, syncSets } from '../services/tcg/tcgSyncPipeline';
+import { runTcgSyncPipeline, syncCardsForNewOrRecentSets, syncPricesRecent, syncSets, type TcgSyncResult } from '../services/tcg/tcgSyncPipeline';
 import { tcgConfig } from '../services/tcg/config';
 
 let runningSets = false;
@@ -61,12 +61,14 @@ export async function runTcgPricesOlderDailySync(): Promise<void> {
   }
 }
 
-export async function runTcgFullSync(): Promise<void> {
+export async function runTcgFullSync(): Promise<TcgSyncResult> {
   try {
     const results = await runTcgSyncPipeline('pokemon');
     console.log('✅ TCG full sync completed:', results);
+    return results;
   } catch (error) {
     console.error('❌ TCG full sync failed:', error);
+    throw error;
   }
 }
 

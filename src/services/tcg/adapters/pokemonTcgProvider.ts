@@ -44,21 +44,29 @@ export class PokemonTcgProvider implements TcgProvider {
   readonly enabled = process.env.TCG_POKEMON_ENABLED !== 'false';
   private readonly client: AxiosInstance;
   private readonly requestDelayMs: number;
+  private readonly retryCount: number;
+  private readonly retryBaseDelayMs: number;
 
   constructor() {
+    const timeoutMs = Number.parseInt(process.env.POKEMON_TCG_TIMEOUT_MS || '30000', 10) || 30000;
     this.client = axios.create({
       baseURL: 'https://api.pokemontcg.io/v2',
-      timeout: 15000,
+      timeout: timeoutMs,
       headers: {
         ...(process.env.POKEMON_TCG_API_KEY ? { 'X-Api-Key': process.env.POKEMON_TCG_API_KEY } : {}),
       },
     });
     this.requestDelayMs = process.env.POKEMON_TCG_API_KEY ? 100 : 450;
+    this.retryCount = Number.parseInt(process.env.POKEMON_TCG_RETRIES || '5', 10) || 5;
+    this.retryBaseDelayMs = Number.parseInt(process.env.POKEMON_TCG_RETRY_BASE_MS || '1000', 10) || 1000;
   }
 
   async listSets(game: SupportedGameSlug): Promise<ProviderSetRecord[]> {
     this.assertGame(game);
-    const response = await withRetry(() => this.client.get<{ data: PokemonSetApi[] }>('/sets'));
+    const response = await withRetry(
+      () => this.client.get<{ data: PokemonSetApi[] }>('/sets'),
+      { retries: this.retryCount, baseDelayMs: this.retryBaseDelayMs },
+    );
     await sleep(this.requestDelayMs);
     await writeRawCache({
       provider: this.providerKey,
@@ -83,8 +91,9 @@ export class PokemonTcgProvider implements TcgProvider {
 
   async getSet(game: SupportedGameSlug, providerSetId: string): Promise<ProviderSetRecord | null> {
     this.assertGame(game);
-    const response = await withRetry(() =>
-      this.client.get<{ data: PokemonSetApi }>(`/sets/${encodeURIComponent(providerSetId)}`),
+    const response = await withRetry(
+      () => this.client.get<{ data: PokemonSetApi }>(`/sets/${encodeURIComponent(providerSetId)}`),
+      { retries: this.retryCount, baseDelayMs: this.retryBaseDelayMs },
     );
     await sleep(this.requestDelayMs);
     await writeRawCache({
@@ -114,16 +123,18 @@ export class PokemonTcgProvider implements TcgProvider {
     this.assertGame(game);
     const page = params.page ?? 1;
     const pageSize = params.pageSize ?? 250;
-    const searchParts = [`set.id:${providerSetId}`];
+    const searchParts = [`set.id:\"${providerSetId}\"`];
     if (params.query) {
       searchParts.push(`name:*${params.query}*`);
     }
     const q = searchParts.join(' ');
 
-    const response = await withRetry(() =>
-      this.client.get<{ data: PokemonCardApi[] }>('/cards', {
-        params: { q, page, pageSize },
-      }),
+    const response = await withRetry(
+      () =>
+        this.client.get<{ data: PokemonCardApi[] }>('/cards', {
+          params: { q, page, pageSize },
+        }),
+      { retries: this.retryCount, baseDelayMs: this.retryBaseDelayMs },
     );
     await sleep(this.requestDelayMs);
     await writeRawCache({
@@ -140,8 +151,9 @@ export class PokemonTcgProvider implements TcgProvider {
 
   async getCard(game: SupportedGameSlug, providerCardId: string): Promise<ProviderCardRecord | null> {
     this.assertGame(game);
-    const response = await withRetry(() =>
-      this.client.get<{ data: PokemonCardApi }>(`/cards/${encodeURIComponent(providerCardId)}`),
+    const response = await withRetry(
+      () => this.client.get<{ data: PokemonCardApi }>(`/cards/${encodeURIComponent(providerCardId)}`),
+      { retries: this.retryCount, baseDelayMs: this.retryBaseDelayMs },
     );
     await sleep(this.requestDelayMs);
     await writeRawCache({
@@ -162,10 +174,12 @@ export class PokemonTcgProvider implements TcgProvider {
     this.assertGame(game);
     if (providerCardIds.length === 0) return [];
     const query = providerCardIds.map((id) => `id:${id}`).join(' OR ');
-    const response = await withRetry(() =>
-      this.client.get<{ data: PokemonCardApi[] }>('/cards', {
-        params: { q: query, pageSize: Math.min(250, providerCardIds.length) },
-      }),
+    const response = await withRetry(
+      () =>
+        this.client.get<{ data: PokemonCardApi[] }>('/cards', {
+          params: { q: query, pageSize: Math.min(250, providerCardIds.length) },
+        }),
+      { retries: this.retryCount, baseDelayMs: this.retryBaseDelayMs },
     );
     await sleep(this.requestDelayMs);
     await writeRawCache({
