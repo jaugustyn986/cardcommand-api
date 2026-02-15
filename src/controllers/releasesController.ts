@@ -15,7 +15,7 @@ function deriveSourceType(url?: string | null): 'official' | 'retailer' | 'distr
   if (u.includes('gtsdistribution') || u.includes('southernhobby') || u.includes('alliance-games')) {
     return 'distributor';
   }
-  if (u.includes('gamestop') || u.includes('bestbuy') || u.includes('target')) {
+  if (u.includes('gamestop') || u.includes('bestbuy') || u.includes('target') || u.includes('tcgplayer')) {
     return 'retailer';
   }
   if (u.includes('pokebeach') || u.includes('reddit') || u.includes('x.com') || u.includes('twitter.com')) {
@@ -44,6 +44,58 @@ function confidenceBandFromScore(score: number): 'high' | 'medium' | 'low' {
   if (score >= 70) return 'high';
   if (score >= 40) return 'medium';
   return 'low';
+}
+
+function parseMarketContext(contentsSummary?: string | null, sourceUrl?: string | null) {
+  const raw = contentsSummary || '';
+  const priceMatch = raw.match(/\[market_price:([^:\]]+):([^:\]]+):([^\]]+)\]/);
+  const productMatch = raw.match(/\[market_match:([^:\]]+):([^:\]]*):([^\]]*)\]/);
+  const cleanedSummary = raw
+    .replace(/\s*\[market_price:[^\]]+\]/g, '')
+    .replace(/\s*\[market_match:[^\]]+\]/g, '')
+    .trim();
+
+  if (!priceMatch && !productMatch) {
+    return { cleanedSummary, marketPriceContext: undefined };
+  }
+
+  const productName = productMatch?.[2] ? decodeURIComponent(productMatch[2]) : undefined;
+  const productUrl = productMatch?.[3] ? decodeURIComponent(productMatch[3]) : undefined;
+
+  return {
+    cleanedSummary,
+    marketPriceContext: {
+      source: priceMatch?.[1],
+      priceType: priceMatch?.[2],
+      asOf: priceMatch?.[3],
+      matchedProductType: productMatch?.[1],
+      matchedProductName: productName,
+      matchedProductUrl: productUrl || sourceUrl || undefined,
+    },
+  };
+}
+
+function parseTopChaseSource(description?: string | null) {
+  const raw = description || '';
+  const match = raw.match(/\[top_chases_source:([^:\]]+):([^:\]]*):([^\]]*)\]/);
+  if (!match) {
+    return {
+      sourceType: undefined as 'price_ranked' | 'editorial_fallback' | undefined,
+      sourceUrl: undefined as string | undefined,
+      asOf: undefined as string | undefined,
+    };
+  }
+
+  const sourceType =
+    match[1] === 'price_ranked' || match[1] === 'editorial_fallback'
+      ? (match[1] as 'price_ranked' | 'editorial_fallback')
+      : undefined;
+
+  return {
+    sourceType,
+    sourceUrl: match[2] ? decodeURIComponent(match[2]) : undefined,
+    asOf: match[3] || undefined,
+  };
 }
 
 // ============================================
@@ -306,7 +358,30 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
       if (preferThis) seen.set(key, p);
     }
     const deduped = Array.from(seen.values());
-    const filtered = deduped.filter((product) => {
+    const visibilityFiltered = (() => {
+      const groupKey = (p: (typeof deduped)[0]) => `${p.category}|${canonicalSetName(p.release.name)}`;
+      const groups = new Map<string, (typeof deduped)>();
+      for (const p of deduped) {
+        const key = groupKey(p);
+        const existing = groups.get(key) || [];
+        existing.push(p);
+        groups.set(key, existing);
+      }
+
+      const visible: (typeof deduped) = [];
+      for (const group of groups.values()) {
+        const hasConcreteSku = group.some((p) => p.productType !== 'set_default');
+        for (const p of group) {
+          if (hasConcreteSku && p.productType === 'set_default') {
+            continue;
+          }
+          visible.push(p);
+        }
+      }
+      return visible;
+    })();
+
+    const filtered = visibilityFiltered.filter((product) => {
       const sourceType = deriveSourceType(product.sourceUrl);
       const status = deriveStatus(product.releaseDate, product.confidence);
       const confidenceScore = deriveConfidenceScore(product.confidence, product.sourceTier as 'A' | 'B' | 'C' | null);
@@ -347,26 +422,30 @@ export const getReleaseProducts = async (req: Request, res: Response) => {
 
     const transformedProducts = products.map((product) => {
       const latestStrategy = product.strategies && product.strategies.length > 0 ? product.strategies[0] : null;
+      const { cleanedSummary, marketPriceContext } = parseMarketContext(product.contentsSummary, product.sourceUrl);
 
+      const topChaseSource = parseTopChaseSource(product.release.description);
       return {
         id: product.id,
         name: product.name,
         productType: product.productType,
         category: product.category,
-        msrp:
-          product.category === 'pokemon' && product.productType === 'set_default'
-            ? undefined
-            : product.msrp ?? undefined,
-        estimatedResale:
-          product.category === 'pokemon' && product.productType === 'set_default'
-            ? undefined
-            : product.estimatedResale ?? undefined,
+        msrp: product.msrp ?? undefined,
+        estimatedResale: product.estimatedResale ?? undefined,
         releaseDate: product.releaseDate ? product.releaseDate.toISOString() : undefined,
         preorderDate: product.preorderDate ? product.preorderDate.toISOString() : undefined,
         imageUrl: product.imageUrl ?? product.release.imageUrl ?? undefined,
         buyUrl: product.buyUrl ?? undefined,
-        contentsSummary: product.contentsSummary ?? undefined,
+        contentsSummary: cleanedSummary || undefined,
+        marketPriceContext,
         setName: product.release.name,
+        setTopChases: product.release.topChases ?? [],
+        setTopChasesAsOf:
+          product.release.topChases && product.release.topChases.length > 0
+            ? topChaseSource.asOf || product.release.updatedAt.toISOString()
+            : undefined,
+        setTopChasesSource: topChaseSource.sourceType,
+        setTopChasesSourceUrl: topChaseSource.sourceUrl,
         setHypeScore: product.release.hypeScore ? Number(product.release.hypeScore) : undefined,
         confidence: product.confidence,
         confidenceScore: deriveConfidenceScore(product.confidence, product.sourceTier as 'A' | 'B' | 'C' | null),

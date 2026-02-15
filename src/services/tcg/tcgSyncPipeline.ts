@@ -11,10 +11,17 @@ const DEFAULT_CARD_PAGE_SIZE = 250;
 export interface TcgSyncResult {
   game: SupportedGameSlug;
   setsSynced: number;
+  setSyncError?: string;
   setsProcessedForCards: number;
   setCardFailures: Array<{ providerSetId: string; error: string }>;
   cardsSynced: number;
   pricesSynced: number;
+  stageDurationsMs?: {
+    sets: number;
+    cards: number;
+    prices: number;
+    total: number;
+  };
 }
 
 let initialized = false;
@@ -136,19 +143,43 @@ export async function syncPricesRecent(game: SupportedGameSlug, recentOnly = tru
 }
 
 export async function runTcgSyncPipeline(game: SupportedGameSlug): Promise<TcgSyncResult> {
+  const runStarted = Date.now();
   ensureRegistryInitialized();
   if (!isGameEnabled(game)) {
     return {
       game,
       setsSynced: 0,
+      setSyncError: undefined,
       setsProcessedForCards: 0,
       setCardFailures: [],
       cardsSynced: 0,
       pricesSynced: 0,
+      stageDurationsMs: {
+        sets: 0,
+        cards: 0,
+        prices: 0,
+        total: 0,
+      },
     };
   }
 
-  const setsSynced = await syncSets(game);
+  console.log(`🔄 TCG full sync started (${game})`);
+
+  const setsStarted = Date.now();
+  let setsSynced = 0;
+  let setSyncError: string | undefined;
+  try {
+    setsSynced = await syncSets(game);
+  } catch (error: any) {
+    setSyncError = error?.message || 'Unknown set sync failure';
+    // Continue with existing DB sets so cards/prices can still progress.
+    console.error(`⚠️ TCG sets stage failed (${game}), continuing with DB sets:`, setSyncError);
+  }
+  const setsDurationMs = Date.now() - setsStarted;
+  if (!setSyncError) {
+    console.log(`✅ TCG sets stage complete (${game}): ${setsSynced} sets in ${setsDurationMs}ms`);
+  }
+
   const provider = getProviderForGame(game);
   const now = new Date();
   const recentCutoff = new Date(now);
@@ -163,6 +194,7 @@ export async function runTcgSyncPipeline(game: SupportedGameSlug): Promise<TcgSy
   });
 
   const setCardFailures: Array<{ providerSetId: string; error: string }> = [];
+  const cardsStarted = Date.now();
   const cardsSynced = await (async () => {
     const dbSets = await prisma.tcgSet.findMany({
       where: {
@@ -207,14 +239,38 @@ export async function runTcgSyncPipeline(game: SupportedGameSlug): Promise<TcgSy
     await upsertCards(game, cards, setIdMap);
     return cards.length;
   })();
+  const cardsDurationMs = Date.now() - cardsStarted;
+  if (setCardFailures.length > 0) {
+    console.warn(
+      `⚠️ TCG cards stage had ${setCardFailures.length} set failures (${game}). First few:`,
+      setCardFailures.slice(0, 5),
+    );
+  }
+  console.log(
+    `✅ TCG cards stage complete (${game}): ${cardsSynced} cards across ${candidateSets.length} sets in ${cardsDurationMs}ms`,
+  );
+
+  const pricesStarted = Date.now();
   const pricesSynced = await syncPricesRecent(game, true);
+  const pricesDurationMs = Date.now() - pricesStarted;
+  console.log(`✅ TCG prices stage complete (${game}): ${pricesSynced} prices in ${pricesDurationMs}ms`);
+
+  const totalDurationMs = Date.now() - runStarted;
+  console.log(`✅ TCG full sync finished (${game}) in ${totalDurationMs}ms`);
   return {
     game,
     setsSynced,
+    setSyncError,
     setsProcessedForCards: candidateSets.length,
     setCardFailures,
     cardsSynced,
     pricesSynced,
+    stageDurationsMs: {
+      sets: setsDurationMs,
+      cards: cardsDurationMs,
+      prices: pricesDurationMs,
+      total: totalDurationMs,
+    },
   };
 }
 

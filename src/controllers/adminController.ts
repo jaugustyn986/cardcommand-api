@@ -7,28 +7,76 @@ import { Request, Response } from 'express';
 import { runReleaseSyncPipeline } from '../releaseSyncPipeline';
 import { runTcgFullSync } from '../jobs/tcgSyncJob';
 import { prisma } from '../config/database';
+import {
+  beginReleaseSyncRun,
+  finishReleaseSyncRunFailure,
+  finishReleaseSyncRunSuccess,
+  getReleaseSyncRunState,
+} from '../services/release/releaseSyncRunState';
+import {
+  beginTcgSyncRun,
+  finishTcgSyncRunFailure,
+  finishTcgSyncRunSuccess,
+  getTcgSyncRunState,
+} from '../services/tcg/tcgSyncRunState';
 
 // ============================================
 // Trigger Release Sync (Manual)
 // ============================================
 
 export async function triggerReleaseSync(req: Request, res: Response) {
+  const started = beginReleaseSyncRun('manual');
+  if (!started.accepted) {
+    return res.status(409).json({
+      success: false,
+      error: 'A release sync is already running',
+      data: {
+        runId: started.run.runId,
+        startedAt: started.run.startedAt,
+      },
+    });
+  }
+
+  const { runId } = started.run;
+  console.log(`🔄 Manual release sync accepted (runId=${runId})`);
+
+  void runReleaseSyncPipeline()
+    .then((data) => {
+      finishReleaseSyncRunSuccess(runId, data);
+      console.log(`✅ Manual release sync completed (runId=${runId})`);
+    })
+    .catch((error) => {
+      finishReleaseSyncRunFailure(runId, error);
+      console.error(`❌ Manual release sync failed (runId=${runId}):`, error);
+    });
+
+  return res.status(202).json({
+    success: true,
+    message: 'Release sync started',
+    data: {
+      runId,
+      startedAt: started.run.startedAt,
+    },
+  });
+}
+
+// ============================================
+// Get Release Sync Run Status
+// ============================================
+
+export async function getReleaseSyncStatus(req: Request, res: Response) {
   try {
-    console.log('🔄 Manual release sync triggered by admin');
-
-    const data = await runReleaseSyncPipeline();
-
+    const state = getReleaseSyncRunState();
     res.json({
       success: true,
-      message: 'Release sync completed',
-      data,
+      data: state,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('❌ Manual release sync failed:', error);
+    console.error('❌ Failed to get release sync run status:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to sync releases',
+      error: 'Failed to get release sync run status',
     });
   }
 }
@@ -38,20 +86,58 @@ export async function triggerReleaseSync(req: Request, res: Response) {
 // ============================================
 
 export async function triggerTcgSync(req: Request, res: Response) {
+  const started = beginTcgSyncRun('manual');
+  if (!started.accepted) {
+    return res.status(409).json({
+      success: false,
+      error: 'A TCG sync is already running',
+      data: {
+        runId: started.run.runId,
+        startedAt: started.run.startedAt,
+      },
+    });
+  }
+
+  const { runId } = started.run;
+  console.log(`🔄 Manual TCG sync accepted (runId=${runId})`);
+
+  void runTcgFullSync()
+    .then((data) => {
+      finishTcgSyncRunSuccess(runId, data);
+      console.log(`✅ Manual TCG sync completed (runId=${runId})`);
+    })
+    .catch((error) => {
+      finishTcgSyncRunFailure(runId, error);
+      console.error(`❌ Manual TCG sync failed (runId=${runId}):`, error);
+    });
+
+  return res.status(202).json({
+    success: true,
+    message: 'TCG sync started',
+    data: {
+      runId,
+      startedAt: started.run.startedAt,
+    },
+  });
+}
+
+// ============================================
+// Get TCG Sync Run Status
+// ============================================
+
+export async function getTcgSyncStatus(req: Request, res: Response) {
   try {
-    console.log('🔄 Manual TCG sync triggered');
-    const data = await runTcgFullSync();
+    const state = getTcgSyncRunState();
     res.json({
       success: true,
-      message: 'TCG sync completed',
-      data,
+      data: state,
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    console.error('❌ Manual TCG sync failed:', error);
+    console.error('❌ Failed to get TCG sync run status:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to sync TCG data',
+      error: 'Failed to get TCG sync run status',
     });
   }
 }

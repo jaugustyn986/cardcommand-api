@@ -84,7 +84,9 @@ router.patch('/user/preferences', authenticateToken, validate(schemas.updatePref
 // ============================================
 
 router.post('/admin/releases/sync', authenticateToken, adminController.triggerReleaseSync);
+router.get('/admin/releases/sync/status', authenticateToken, adminController.getReleaseSyncStatus);
 router.post('/admin/tcg/sync', authenticateToken, adminController.triggerTcgSync);
+router.get('/admin/tcg/sync/status', authenticateToken, adminController.getTcgSyncStatus);
 router.get('/admin/releases/status', authenticateToken, adminController.getSyncStatus);
 router.get('/admin/health', adminController.getApiHealth);
 

@@ -6,6 +6,8 @@
 import { Category, Release, SourceTier } from '@prisma/client';
 import axios from 'axios';
 import { prisma } from './config/database';
+import { getSealedMarketPrice } from './marketDataService';
+import { getEditorialTopChasesForSet } from './services/release/editorialTopChases';
 
 // ============================================
 // Pokemon TCG API Sync
@@ -451,6 +453,131 @@ function tierAEstimatedResale(msrp: number): number {
 
 type TierAMetadata = { category: 'pokemon'; set: PokemonSet } | { category: 'mtg'; set: ScryfallSet };
 
+const pokemonSealedSkuTemplates: Array<{ productType: string; label: string; msrp: number }> = [
+  { productType: 'booster_bundle', label: 'Booster Bundle', msrp: 29.99 },
+  { productType: 'elite_trainer_box', label: 'Elite Trainer Box', msrp: 49.99 },
+  { productType: 'booster_box', label: 'Booster Box', msrp: 143.99 },
+];
+
+async function ensurePokemonSealedSkuProducts(
+  release: Release,
+  sourceUrl: string,
+): Promise<void> {
+  for (const sku of pokemonSealedSkuTemplates) {
+    const name = `${release.name} ${sku.label}`;
+    const buyUrl = `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(name)}`;
+    const existing = await prisma.releaseProduct.findFirst({
+      where: {
+        releaseId: release.id,
+        productType: sku.productType,
+      },
+    });
+
+    const data = {
+      name,
+      productType: sku.productType,
+      category: release.category,
+      msrp: sku.msrp,
+      estimatedResale: existing?.estimatedResale ?? null,
+      releaseDate: release.releaseDate,
+      preorderDate: null as Date | null,
+      imageUrl: release.imageUrl,
+      buyUrl,
+      sourceUrl,
+      sourceTier: SourceTier.A,
+      confidence: existing?.confidence ?? undefined,
+      contentsSummary: `${sku.label} sealed product for ${release.name}.`,
+    };
+
+    if (existing) {
+      await prisma.releaseProduct.update({
+        where: { id: existing.id },
+        data,
+      });
+    } else {
+      await prisma.releaseProduct.create({
+        data: {
+          releaseId: release.id,
+          ...data,
+        },
+      });
+    }
+  }
+}
+
+export async function backfillPokemonSealedSkuRows(): Promise<number> {
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+  const releases = await prisma.release.findMany({
+    where: {
+      category: 'pokemon',
+      releaseDate: { gte: oneYearAgo },
+    },
+    orderBy: { releaseDate: 'desc' },
+  });
+
+  let created = 0;
+  for (const release of releases) {
+    const setDefault = await prisma.releaseProduct.findFirst({
+      where: {
+        releaseId: release.id,
+        productType: 'set_default',
+      },
+      select: { sourceUrl: true },
+    });
+    const sourceUrl = setDefault?.sourceUrl || 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions';
+
+    for (const sku of pokemonSealedSkuTemplates) {
+      const name = `${release.name} ${sku.label}`;
+      const buyUrl = `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(name)}`;
+      const existing = await prisma.releaseProduct.findFirst({
+        where: {
+          releaseId: release.id,
+          productType: sku.productType,
+        },
+      });
+
+      if (existing) {
+        await prisma.releaseProduct.update({
+          where: { id: existing.id },
+          data: {
+            name,
+            msrp: existing.msrp ?? sku.msrp,
+            buyUrl,
+            sourceUrl: existing.sourceUrl ?? sourceUrl,
+            sourceTier: existing.sourceTier ?? SourceTier.A,
+            releaseDate: existing.releaseDate ?? release.releaseDate,
+          },
+        });
+      } else {
+        await prisma.releaseProduct.create({
+          data: {
+            releaseId: release.id,
+            name,
+            productType: sku.productType,
+            category: release.category,
+            msrp: sku.msrp,
+            estimatedResale: null,
+            releaseDate: release.releaseDate,
+            preorderDate: null,
+            imageUrl: release.imageUrl,
+            buyUrl,
+            contentsSummary: `${sku.label} sealed product for ${release.name}.`,
+            sourceTier: SourceTier.A,
+            sourceUrl,
+          },
+        });
+        created++;
+      }
+    }
+  }
+
+  if (created > 0) {
+    console.log(`✅ Pokemon sealed SKU row backfill: created ${created} rows`);
+  }
+  return created;
+}
+
 async function ensureDefaultReleaseProduct(
   release: Release,
   tierAMeta?: TierAMetadata,
@@ -505,6 +632,12 @@ async function ensureDefaultReleaseProduct(
         sourceTier: tierAMeta ? SourceTier.A : existing.sourceTier,
       },
     });
+    if (tierAMeta?.category === 'pokemon') {
+      await ensurePokemonSealedSkuProducts(
+        release,
+        sourceUrl || 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions',
+      );
+    }
     return;
   }
 
@@ -514,6 +647,13 @@ async function ensureDefaultReleaseProduct(
       ...productData,
     },
   });
+
+  if (tierAMeta?.category === 'pokemon') {
+    await ensurePokemonSealedSkuProducts(
+      release,
+      sourceUrl || 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions',
+    );
+  }
 }
 
 /** Backfill buyUrl, sourceUrl, estimatedResale for set_default products that are missing them */
@@ -572,6 +712,11 @@ export async function backfillPokemonSetDefaultPricing(): Promise<number> {
       category: 'pokemon',
       productType: 'set_default',
       sourceTier: SourceTier.A,
+      NOT: {
+        contentsSummary: {
+          contains: '[market_price:',
+        },
+      },
       OR: [{ msrp: { not: null } }, { estimatedResale: { not: null } }],
     },
     select: { id: true },
@@ -589,4 +734,257 @@ export async function backfillPokemonSetDefaultPricing(): Promise<number> {
   }
 
   return products.length;
+}
+
+/**
+ * Enrich sealed products with real market prices from marketplace search (best effort).
+ * This targets the Releases UX intent (packs/boxes/tins users can actually buy).
+ */
+export async function backfillSealedProductMarketPricing(): Promise<number> {
+  const sealedTypes = [
+    'set_default',
+    'elite_trainer_box',
+    'booster_box',
+    'booster_bundle',
+    'tin',
+    'collection',
+    'blister',
+    'build_battle',
+  ];
+
+  const products = await prisma.releaseProduct.findMany({
+    where: {
+      category: 'pokemon',
+      productType: { in: sealedTypes },
+      OR: [
+        { estimatedResale: null },
+        {
+          contentsSummary: {
+            contains: '[market_price:',
+          },
+        },
+      ],
+    },
+    include: { release: true },
+    orderBy: { releaseDate: 'desc' },
+    take: 80,
+  });
+
+  let updated = 0;
+  for (const p of products) {
+    const strictPreferredKind = p.productType !== 'booster_pack';
+    const preferredKinds: Array<
+      'booster_box' | 'booster_bundle' | 'booster_pack' | 'elite_trainer_box' | 'tin' | 'collection' | 'blister' | 'other'
+    > =
+      p.productType === 'set_default'
+        ? ['booster_bundle', 'booster_box', 'elite_trainer_box', 'tin', 'collection', 'blister']
+        : p.productType === 'booster_box'
+          ? ['booster_box']
+          : p.productType === 'booster_bundle'
+            ? ['booster_bundle']
+            : p.productType === 'elite_trainer_box'
+              ? ['elite_trainer_box']
+              : p.productType === 'tin'
+                ? ['tin']
+                : p.productType === 'collection'
+                  ? ['collection']
+                  : p.productType === 'blister'
+                    ? ['blister']
+                    : ['booster_pack', 'booster_bundle', 'booster_box'];
+    let market = null as Awaited<ReturnType<typeof getSealedMarketPrice>>;
+    if (p.productType === 'set_default') {
+      const targetedQueries = [
+        `${p.release.name} booster bundle`,
+        `${p.release.name} booster box`,
+        `${p.release.name} elite trainer box`,
+        `${p.release.name} tin`,
+      ];
+      for (const queryName of targetedQueries) {
+        market = await getSealedMarketPrice(queryName, p.category, {
+          preferredKinds,
+          requirePreferredKinds: strictPreferredKind,
+        });
+        if (market) break;
+      }
+    } else {
+      market = await getSealedMarketPrice(p.name, p.category, {
+        preferredKinds,
+        requirePreferredKinds: strictPreferredKind,
+      });
+    }
+    if (!market?.price || market.price <= 0) {
+      if (strictPreferredKind) {
+        const stripped = (p.contentsSummary || '')
+          .replace(/\s*\[market_price:[^\]]+\]/g, '')
+          .replace(/\s*\[market_match:[^\]]+\]/g, '')
+          .trim();
+        if (p.estimatedResale != null || stripped !== (p.contentsSummary || '')) {
+          await prisma.releaseProduct.update({
+            where: { id: p.id },
+            data: {
+              estimatedResale: null,
+              contentsSummary: stripped || null,
+            },
+          });
+          updated++;
+        }
+      }
+      continue;
+    }
+
+    const summaryPrefix = p.contentsSummary
+      ? p.contentsSummary
+          .replace(/\s*\[market_price:[^\]]+\]/g, '')
+          .replace(/\s*\[market_match:[^\]]+\]/g, '')
+          .trim()
+      : '';
+    const marketStamp = `[market_price:${market.source}:${market.priceType || 'market'}:${market.fetchedAt}]`;
+    const matchStamp = `[market_match:${market.productKind || 'other'}:${encodeURIComponent(market.productName || '')}:${encodeURIComponent(market.productUrl || '')}]`;
+    const sourceUrl = market.productUrl || p.sourceUrl || null;
+
+    await prisma.releaseProduct.update({
+      where: { id: p.id },
+      data: {
+        estimatedResale: market.price,
+        sourceUrl,
+        contentsSummary: `${summaryPrefix} ${marketStamp} ${matchStamp}`.trim(),
+      },
+    });
+    updated++;
+  }
+
+  if (updated > 0) {
+    console.log(`✅ Sealed market pricing backfill: updated ${updated} products`);
+  }
+  return updated;
+}
+
+/**
+ * Compute and persist top chase cards per Pokemon release based on card market prices.
+ * Ranking: market > mid > low, descending. Excludes obvious non-chase code cards.
+ */
+export async function backfillReleaseTopChasesFromTcg(topN = 5): Promise<number> {
+  const game = await prisma.game.findUnique({
+    where: { slug: 'pokemon' },
+    select: { id: true, enabled: true },
+  });
+  if (!game || !game.enabled) return 0;
+
+  const oneYearAgo = new Date();
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+
+  const [releases, sets] = await Promise.all([
+    prisma.release.findMany({
+      where: { category: 'pokemon', releaseDate: { gte: oneYearAgo } },
+      select: { id: true, name: true, topChases: true, description: true },
+      orderBy: { releaseDate: 'desc' },
+    }),
+    prisma.tcgSet.findMany({
+      where: { gameId: game.id, provider: 'pokemontcg' },
+      select: { id: true, name: true, releaseDate: true },
+    }),
+  ]);
+
+  const setByExact = new Map<string, (typeof sets)[0]>();
+  for (const s of sets) {
+    setByExact.set(normalizeForMatch(s.name), s);
+  }
+
+  function findBestSetForRelease(releaseName: string): (typeof sets)[0] | null {
+    const releaseNorm = normalizeForMatch(releaseName);
+    const exact = setByExact.get(releaseNorm);
+    if (exact) return exact;
+
+    let best: (typeof sets)[0] | null = null;
+    let bestScore = 0;
+    for (const s of sets) {
+      const setNorm = normalizeForMatch(s.name);
+      const overlap =
+        releaseNorm.includes(setNorm) || setNorm.includes(releaseNorm)
+          ? Math.min(setNorm.length, releaseNorm.length)
+          : 0;
+      if (overlap > bestScore) {
+        best = s;
+        bestScore = overlap;
+      }
+    }
+    return bestScore > 6 ? best : null;
+  }
+
+  const minPricedCardsForDeterministicRanking = 3;
+  let updated = 0;
+  for (const release of releases) {
+    const set = findBestSetForRelease(release.name);
+    if (!set) continue;
+
+    const cards = await prisma.tcgCard.findMany({
+      where: { gameId: game.id, setId: set.id },
+      select: {
+        name: true,
+        number: true,
+        latestPrices: {
+          where: { source: 'tcgplayer_via_pokemontcg' },
+          select: { market: true, mid: true, low: true },
+          orderBy: { updatedAt: 'desc' },
+        },
+      },
+      take: 600,
+    });
+
+    const ranked = cards
+      .map((card) => {
+        const p = card.latestPrices[0];
+        const value = p?.market ?? p?.mid ?? p?.low ?? null;
+        return { card, value };
+      })
+      .filter((entry) => {
+        if (entry.value == null || entry.value <= 0) return false;
+        const n = entry.card.name.toLowerCase();
+        if (n.includes('code card')) return false;
+        return true;
+      })
+      .sort((a, b) => (b.value as number) - (a.value as number))
+      .slice(0, Math.max(1, topN));
+
+    const pricedTopChases = ranked.map((entry) => {
+      const label = entry.card.number ? `${entry.card.name} #${entry.card.number}` : entry.card.name;
+      return `${label} ($${(entry.value as number).toFixed(2)})`;
+    });
+    let nextTopChases = pricedTopChases;
+
+    // Hybrid fallback: if price coverage is too thin, use trusted editorial list.
+    let chaseSourceTag = '[top_chases_source:price_ranked::]';
+    if (pricedTopChases.length < minPricedCardsForDeterministicRanking) {
+      const editorial = await getEditorialTopChasesForSet(set.name, topN);
+      if (editorial && editorial.topChases.length > 0) {
+        nextTopChases = editorial.topChases;
+        chaseSourceTag = `[top_chases_source:${editorial.sourceType}:${encodeURIComponent(editorial.sourceUrl)}:${editorial.asOfIso}]`;
+      } else if (nextTopChases.length === 0) {
+        // Preserve existing values if we have no deterministic or editorial candidates.
+        nextTopChases = release.topChases || [];
+      }
+    }
+
+    const baseDescription = (release.description || '').replace(/\s*\[top_chases_source:[^\]]+\]/g, '').trim();
+    const nextDescription = `${baseDescription} ${chaseSourceTag}`.trim();
+
+    const changed =
+      JSON.stringify(release.topChases || []) !== JSON.stringify(nextTopChases) ||
+      (release.description || '').trim() !== nextDescription;
+    if (!changed) continue;
+
+    await prisma.release.update({
+      where: { id: release.id },
+      data: {
+        topChases: nextTopChases,
+        description: nextDescription,
+      },
+    });
+    updated++;
+  }
+
+  if (updated > 0) {
+    console.log(`✅ Release top chases backfill: updated ${updated} releases`);
+  }
+  return updated;
 }

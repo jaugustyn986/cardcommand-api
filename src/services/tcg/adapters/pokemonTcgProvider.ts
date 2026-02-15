@@ -48,7 +48,7 @@ export class PokemonTcgProvider implements TcgProvider {
   private readonly retryBaseDelayMs: number;
 
   constructor() {
-    const timeoutMs = Number.parseInt(process.env.POKEMON_TCG_TIMEOUT_MS || '30000', 10) || 30000;
+    const timeoutMs = Number.parseInt(process.env.POKEMON_TCG_TIMEOUT_MS || '45000', 10) || 45000;
     this.client = axios.create({
       baseURL: 'https://api.pokemontcg.io/v2',
       timeout: timeoutMs,

@@ -29,6 +29,12 @@ This module provides a provider-agnostic catalog and pricing pipeline for TCG da
   - recent prices every 6h
   - older prices daily
 
+### Manual sync observability
+
+- `POST /api/admin/tcg/sync` starts a background sync run and returns `202` with `runId`.
+- `GET /api/admin/tcg/sync/status` returns `idle|running|completed|failed` plus current/last run metadata.
+- Full-sync logs include per-stage durations (sets/cards/prices) and set-card failure samples.
+
 ## Environment flags
 
 - `TCG_SYNC_ENABLED=true` enables cron jobs.
@@ -39,4 +45,7 @@ This module provides a provider-agnostic catalog and pricing pipeline for TCG da
   - `TCG_RECENT_SET_WINDOW_DAYS`
   - `TCG_CARD_SYNC_CONCURRENCY`
   - `TCG_PRICE_CHUNK_SIZE`
+  - `POKEMON_TCG_TIMEOUT_MS`
+  - `POKEMON_TCG_RETRIES`
+  - `POKEMON_TCG_RETRY_BASE_MS`
 

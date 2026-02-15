@@ -4,7 +4,14 @@
 // Used by both admin endpoint and scheduled cron
 // ============================================
 
-import { syncAllReleases, backfillTierALinks, backfillPokemonSetDefaultPricing } from './releaseSyncService';
+import {
+  syncAllReleases,
+  backfillTierALinks,
+  backfillPokemonSetDefaultPricing,
+  backfillSealedProductMarketPricing,
+  backfillPokemonSealedSkuRows,
+  backfillReleaseTopChasesFromTcg,
+} from './releaseSyncService';
 import { scrapeAndUpsertReleaseProducts } from './releaseScrapeService';
 import { backfillStrategiesForPokemon } from './releaseStrategyService';
 
@@ -13,6 +20,9 @@ export interface SyncPipelineResult {
   mtg: number;
   tierALinksBackfilled: number;
   pokemonSetPricingCleaned: number;
+  sealedSkuRowsCreated: number;
+  sealedMarketPricingBackfilled: number;
+  topChasesBackfilled: number;
   scrape?: {
     sources: number;
     productsUpserted: number;
@@ -39,6 +49,27 @@ export async function runReleaseSyncPipeline(): Promise<SyncPipelineResult> {
     console.error('⚠️ Pokémon set_default pricing cleanup failed:', err);
   }
 
+  let sealedSkuRowsCreated = 0;
+  try {
+    sealedSkuRowsCreated = await backfillPokemonSealedSkuRows();
+  } catch (err) {
+    console.error('⚠️ Pokémon sealed SKU row backfill failed:', err);
+  }
+
+  let sealedMarketPricingBackfilled = 0;
+  try {
+    sealedMarketPricingBackfilled = await backfillSealedProductMarketPricing();
+  } catch (err) {
+    console.error('⚠️ Sealed market pricing backfill failed:', err);
+  }
+
+  let topChasesBackfilled = 0;
+  try {
+    topChasesBackfilled = await backfillReleaseTopChasesFromTcg(5);
+  } catch (err) {
+    console.error('⚠️ Top chases backfill failed:', err);
+  }
+
   let scrapeResult: SyncPipelineResult['scrape'];
   try {
     scrapeResult = await scrapeAndUpsertReleaseProducts();
@@ -60,6 +91,9 @@ export async function runReleaseSyncPipeline(): Promise<SyncPipelineResult> {
     ...results,
     tierALinksBackfilled,
     pokemonSetPricingCleaned,
+    sealedSkuRowsCreated,
+    sealedMarketPricingBackfilled,
+    topChasesBackfilled,
     scrape: scrapeResult,
     strategiesBackfilled,
   };
