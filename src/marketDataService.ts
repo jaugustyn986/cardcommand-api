@@ -23,6 +23,39 @@ interface SealedPriceOptions {
   requirePreferredKinds?: boolean;
 }
 
+function normalizeSearchName(name: string): string {
+  return (name || '')
+    .replace(/\([^)]*\)/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildSearchQueries(productName: string, setOrCategory: string): string[] {
+  const queries: string[] = [];
+  const push = (value: string) => {
+    const v = value.trim();
+    if (!v) return;
+    if (!queries.includes(v)) queries.push(v);
+  };
+
+  const normalizedProduct = normalizeSearchName(productName);
+  const normalizedSet = normalizeSearchName(setOrCategory);
+
+  push(`${productName} ${setOrCategory}`);
+  push(`${normalizedProduct} ${setOrCategory}`);
+  push(productName);
+  push(normalizedProduct);
+
+  // Extra ETB synonym improves hit rates when pages abbreviate.
+  if (/elite trainer box/i.test(productName)) {
+    push(`${productName.replace(/elite trainer box/gi, 'ETB')} ${setOrCategory}`);
+    push(`${normalizedProduct.replace(/elite trainer box/gi, 'ETB')} ${normalizedSet}`);
+  }
+
+  return queries;
+}
+
 function inferProductKind(name?: string): NonNullable<MarketPriceResult['productKind']> {
   const n = (name || '').toLowerCase();
   if (n.includes('booster box')) return 'booster_box';
@@ -46,8 +79,9 @@ export async function fetchTcgPlayerSealedPrice(
   options: SealedPriceOptions = {},
 ): Promise<MarketPriceResult | null> {
   try {
-    const query = `${productName} ${setOrCategory}`.trim();
-    const queryUrl = `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(query)}`;
+    const queries = buildSearchQueries(productName, setOrCategory);
+    let bestForAnyQuery: MarketPriceResult | null = null;
+
     const stopwords = new Set([
       'pokemon',
       'tcg',
@@ -70,127 +104,136 @@ export async function fetchTcgPlayerSealedPrice(
       'for',
       'with',
     ]);
-    const preferredTokens = productName
-      .toLowerCase()
-      .split(/\s+/)
-      .map((t) => t.replace(/[^a-z0-9]/g, ''))
-      .filter((t) => t.length >= 3 && !stopwords.has(t));
-    const body = {
-      algorithm: 'sales_dismax',
-      from: 0,
-      size: 30,
-      filters: {
-        term: {
-          productLineName: ['pokemon'],
+    for (const query of queries) {
+      const queryUrl = `https://www.tcgplayer.com/search/pokemon/product?q=${encodeURIComponent(query)}`;
+      const preferredTokens = query
+        .toLowerCase()
+        .split(/\s+/)
+        .map((t) => t.replace(/[^a-z0-9]/g, ''))
+        .filter((t) => t.length >= 3 && !stopwords.has(t));
+      const body = {
+        algorithm: 'sales_dismax',
+        from: 0,
+        size: 30,
+        filters: {
+          term: {
+            productLineName: ['pokemon'],
+          },
         },
-      },
-      listingSearch: {
-        context: { cart: {} },
-        filters: { term: { sellerStatus: 'Live', channelId: 0, mpSellerType: 'Gold' } },
-        sort: { field: 'listingType', order: 'asc' },
-      },
-      context: { cart: {}, shippingCountry: 'US' },
-      settings: { useFuzzySearch: true },
-      sort: {},
-      query,
-    };
+        listingSearch: {
+          context: { cart: {} },
+          // Keep sellerStatus/channel constraints, but do not require Gold-only sellers.
+          filters: { term: { sellerStatus: 'Live', channelId: 0 } },
+          sort: { field: 'listingType', order: 'asc' },
+        },
+        context: { cart: {}, shippingCountry: 'US' },
+        settings: { useFuzzySearch: true },
+        sort: {},
+        query,
+      };
 
-    const response = await axios.post<{
-      results?: Array<{
+      const response = await axios.post<{
         results?: Array<{
-          sealed?: boolean;
-          productName?: string;
-          productUrlName?: string;
-          productId?: number;
-          marketPrice?: number;
-          lowestPriceWithShipping?: number;
-          lowestPrice?: number;
-          score?: number;
+          results?: Array<{
+            sealed?: boolean;
+            productName?: string;
+            productUrlName?: string;
+            productId?: number;
+            marketPrice?: number;
+            lowestPriceWithShipping?: number;
+            lowestPrice?: number;
+            score?: number;
+          }>;
         }>;
-      }>;
-    }>('https://mp-search-api.tcgplayer.com/v1/search/request', body, {
-      timeout: Number.parseInt(process.env.TCGPLAYER_SEARCH_TIMEOUT_MS || '15000', 10) || 15000,
-      headers: {
-        Accept: 'application/json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'CardCommand/1.0',
-      },
-      validateStatus: (s) => s >= 200 && s < 500,
-    });
+      }>('https://mp-search-api.tcgplayer.com/v1/search/request', body, {
+        timeout: Number.parseInt(process.env.TCGPLAYER_SEARCH_TIMEOUT_MS || '15000', 10) || 15000,
+        headers: {
+          Accept: 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'CardCommand/1.0',
+        },
+        validateStatus: (s) => s >= 200 && s < 500,
+      });
 
-    const results = response.data?.results?.[0]?.results || [];
-    if (results.length === 0) return null;
+      const results = response.data?.results?.[0]?.results || [];
+      if (results.length === 0) continue;
 
-    const sealedKeyword = /(booster box|booster bundle|booster pack|elite trainer box|etb|tin|collection|blister|build battle)/i;
-    const excludedKeyword = /(code card|single card|\s-\s\d+\/\d+)/i;
-    const queryNorm = query.toLowerCase();
+      const sealedKeyword = /(booster box|booster bundle|booster pack|elite trainer box|etb|tin|collection|blister|build battle)/i;
+      const excludedKeyword = /(code card|single card|\s-\s\d+\/\d+)/i;
+      const queryNorm = query.toLowerCase();
 
-    const candidates = results
-      .filter((r) => {
-        const name = r.productName || '';
-        const isSealed = r.sealed === true || sealedKeyword.test(name);
-        return isSealed && !excludedKeyword.test(name);
-      })
-      .map((r) => {
-        const price = r.marketPrice ?? r.lowestPriceWithShipping ?? r.lowestPrice;
-        const name = (r.productName || '').toLowerCase();
-        const tokenHits = queryNorm
-          .split(/\s+/)
-          .filter((t) => t.length >= 3)
-          .reduce((acc, token) => (name.includes(token) ? acc + 1 : acc), 0);
-        return {
-          ...r,
-          computedPrice: typeof price === 'number' ? price : null,
-          tokenHits,
-          preferredHits: preferredTokens.reduce((acc, token) => (name.includes(token) ? acc + 1 : acc), 0),
-        };
-      })
-      .filter((r) => r.computedPrice != null && r.computedPrice > 0);
+      const candidates = results
+        .filter((r) => {
+          const name = r.productName || '';
+          const isSealed = r.sealed === true || sealedKeyword.test(name);
+          return isSealed && !excludedKeyword.test(name);
+        })
+        .map((r) => {
+          const price = r.marketPrice ?? r.lowestPriceWithShipping ?? r.lowestPrice;
+          const name = (r.productName || '').toLowerCase();
+          const tokenHits = queryNorm
+            .split(/\s+/)
+            .filter((t) => t.length >= 3)
+            .reduce((acc, token) => (name.includes(token) ? acc + 1 : acc), 0);
+          return {
+            ...r,
+            computedPrice: typeof price === 'number' ? price : null,
+            tokenHits,
+            preferredHits: preferredTokens.reduce((acc, token) => (name.includes(token) ? acc + 1 : acc), 0),
+          };
+        })
+        .filter((r) => r.computedPrice != null && r.computedPrice > 0);
 
-    if (candidates.length === 0) return null;
+      if (candidates.length === 0) continue;
 
-    const preferredCandidates =
-      preferredTokens.length > 0 ? candidates.filter((c) => c.preferredHits > 0) : candidates;
-    if (preferredTokens.length > 0 && preferredCandidates.length === 0) {
-      return null;
+      const preferredCandidates =
+        preferredTokens.length > 0 ? candidates.filter((c) => c.preferredHits > 0) : candidates;
+      const ranked = preferredCandidates.length > 0 ? preferredCandidates : candidates;
+      const preferredKinds = new Set(options.preferredKinds || []);
+      const kindMatched =
+        preferredKinds.size > 0
+          ? ranked.filter((r) => preferredKinds.has(inferProductKind(r.productName)))
+          : ranked;
+      if (options.requirePreferredKinds && preferredKinds.size > 0 && kindMatched.length === 0) {
+        continue;
+      }
+      const pool = kindMatched.length > 0 ? kindMatched : ranked;
+
+      pool.sort((a, b) => {
+        const aKind = inferProductKind(a.productName);
+        const bKind = inferProductKind(b.productName);
+        const aPreferred = preferredKinds.has(aKind) ? 1 : 0;
+        const bPreferred = preferredKinds.has(bKind) ? 1 : 0;
+        if (bPreferred !== aPreferred) return bPreferred - aPreferred;
+        // For ambiguous set-level products, down-rank single packs behind larger sealed items.
+        const aPackPenalty = aKind === 'booster_pack' ? 1 : 0;
+        const bPackPenalty = bKind === 'booster_pack' ? 1 : 0;
+        if (aPackPenalty !== bPackPenalty) return aPackPenalty - bPackPenalty;
+        if (b.preferredHits !== a.preferredHits) return b.preferredHits - a.preferredHits;
+        if (b.tokenHits !== a.tokenHits) return b.tokenHits - a.tokenHits;
+        return (b.score || 0) - (a.score || 0);
+      });
+
+      const best = pool[0];
+      const result: MarketPriceResult = {
+        source: 'tcgplayer',
+        price: Number(best.computedPrice),
+        currency: 'USD',
+        fetchedAt: new Date().toISOString(),
+        priceType: best.marketPrice != null ? 'market' : 'lowest',
+        productName: best.productName,
+        productUrl: best.productId ? `https://www.tcgplayer.com/product/${best.productId}` : queryUrl,
+        productKind: inferProductKind(best.productName),
+      };
+
+      if (!bestForAnyQuery || result.price > 0) {
+        bestForAnyQuery = result;
+        // Prefer the first valid hit; queries are ordered most specific to broad.
+        break;
+      }
     }
-    const ranked = preferredCandidates.length > 0 ? preferredCandidates : candidates;
-    const preferredKinds = new Set(options.preferredKinds || []);
-    const kindMatched =
-      preferredKinds.size > 0
-        ? ranked.filter((r) => preferredKinds.has(inferProductKind(r.productName)))
-        : ranked;
-    if (options.requirePreferredKinds && preferredKinds.size > 0 && kindMatched.length === 0) {
-      return null;
-    }
-    const pool = kindMatched.length > 0 ? kindMatched : ranked;
 
-    pool.sort((a, b) => {
-      const aKind = inferProductKind(a.productName);
-      const bKind = inferProductKind(b.productName);
-      const aPreferred = preferredKinds.has(aKind) ? 1 : 0;
-      const bPreferred = preferredKinds.has(bKind) ? 1 : 0;
-      if (bPreferred !== aPreferred) return bPreferred - aPreferred;
-      // For ambiguous set-level products, down-rank single packs behind larger sealed items.
-      const aPackPenalty = aKind === 'booster_pack' ? 1 : 0;
-      const bPackPenalty = bKind === 'booster_pack' ? 1 : 0;
-      if (aPackPenalty !== bPackPenalty) return aPackPenalty - bPackPenalty;
-      if (b.preferredHits !== a.preferredHits) return b.preferredHits - a.preferredHits;
-      if (b.tokenHits !== a.tokenHits) return b.tokenHits - a.tokenHits;
-      return (b.score || 0) - (a.score || 0);
-    });
-
-    const best = pool[0];
-    return {
-      source: 'tcgplayer',
-      price: Number(best.computedPrice),
-      currency: 'USD',
-      fetchedAt: new Date().toISOString(),
-      priceType: best.marketPrice != null ? 'market' : 'lowest',
-      productName: best.productName,
-      productUrl: best.productId ? `https://www.tcgplayer.com/product/${best.productId}` : queryUrl,
-      productKind: inferProductKind(best.productName),
-    };
+    return bestForAnyQuery;
   } catch {
     return null;
   }

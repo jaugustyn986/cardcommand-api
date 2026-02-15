@@ -68,6 +68,10 @@ function cleanHtmlText(input: string): string {
     .trim();
 }
 
+function stripParenthetical(input: string): string {
+  return (input || '').replace(/\([^)]*\)/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 function toAbsolutePokemonUrl(pathOrUrl?: string): string {
   if (!pathOrUrl) return 'https://www.pokemon.com/us/pokemon-tcg/trading-card-expansions';
   if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) return pathOrUrl;
@@ -791,27 +795,57 @@ export async function backfillSealedProductMarketPricing(): Promise<number> {
                   : p.productType === 'blister'
                     ? ['blister']
                     : ['booster_pack', 'booster_bundle', 'booster_box'];
+    const queryCandidates: string[] = [];
+    const pushQuery = (value: string) => {
+      const v = (value || '').trim();
+      if (!v) return;
+      if (!queryCandidates.includes(v)) queryCandidates.push(v);
+    };
+
     let market = null as Awaited<ReturnType<typeof getSealedMarketPrice>>;
     if (p.productType === 'set_default') {
-      const targetedQueries = [
-        `${p.release.name} booster bundle`,
-        `${p.release.name} booster box`,
-        `${p.release.name} elite trainer box`,
-        `${p.release.name} tin`,
-      ];
-      for (const queryName of targetedQueries) {
-        market = await getSealedMarketPrice(queryName, p.category, {
-          preferredKinds,
-          requirePreferredKinds: strictPreferredKind,
-        });
-        if (market) break;
+      const suffixes = ['booster bundle', 'booster box', 'elite trainer box', 'tin'];
+      for (const suffix of suffixes) {
+        pushQuery(`${p.release.name} ${suffix}`);
+        pushQuery(`${stripParenthetical(p.release.name)} ${suffix}`);
       }
     } else {
-      market = await getSealedMarketPrice(p.name, p.category, {
+      pushQuery(p.name);
+      pushQuery(stripParenthetical(p.name));
+      if (p.productType === 'elite_trainer_box') {
+        pushQuery(`${stripParenthetical(p.release.name)} ETB`);
+      }
+      if (p.productType === 'booster_box') {
+        pushQuery(`${stripParenthetical(p.release.name)} booster box`);
+      }
+      if (p.productType === 'booster_bundle') {
+        pushQuery(`${stripParenthetical(p.release.name)} booster bundle`);
+      }
+      if (p.productType === 'tin') {
+        pushQuery(`${stripParenthetical(p.release.name)} tin`);
+      }
+    }
+
+    // Pass 1: strict product-kind matching.
+    for (const queryName of queryCandidates) {
+      market = await getSealedMarketPrice(queryName, p.category, {
         preferredKinds,
         requirePreferredKinds: strictPreferredKind,
       });
+      if (market) break;
     }
+
+    // Pass 2: relax kind requirement if strict misses.
+    if (!market) {
+      for (const queryName of queryCandidates) {
+        market = await getSealedMarketPrice(queryName, p.category, {
+          preferredKinds,
+          requirePreferredKinds: false,
+        });
+        if (market) break;
+      }
+    }
+
     if (!market?.price || market.price <= 0) {
       if (strictPreferredKind) {
         const stripped = (p.contentsSummary || '')
