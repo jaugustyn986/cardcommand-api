@@ -835,8 +835,10 @@ export async function backfillSealedProductMarketPricing(): Promise<number> {
       if (market) break;
     }
 
-    // Pass 2: relax kind requirement if strict misses.
-    if (!market) {
+    // Pass 2: relax kind requirement only for set_default placeholders.
+    // Concrete SKU rows must stay kind-strict to avoid "booster pack" mismatches.
+    const allowKindRelaxation = p.productType === 'set_default';
+    if (!market && allowKindRelaxation) {
       for (const queryName of queryCandidates) {
         market = await getSealedMarketPrice(queryName, p.category, {
           preferredKinds,
