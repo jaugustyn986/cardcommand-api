@@ -1,112 +1,126 @@
 # CardCommand API - AI Handoff
 
-> Focus area in current phase: Releases intelligence ingestion, deduplication, pricing integrity, and trust metadata for UI.
+> Use this doc to resume API work quickly and safely.
 
 ---
 
-## 1. Current backend state
+## Current Focus
 
-- Deployed on Railway and synced via pushes to `main`.
-- Release sync is centralized in `src/releaseSyncPipeline.ts`.
-- Manual sync endpoint (`POST /api/admin/releases/sync`) and cron job both call the same pipeline.
-- Cron schedule is in `src/jobs/releaseSyncJob.ts`: `0 6,12,18 * * *` (UTC).
-- Tier A ingestion includes:
-  - Pokemon TCG API
-  - Scryfall
-  - `pokemon.com/api/1/us/expansions` deterministic source
-- Tier B/C ingestion includes source registry + scraping/extraction flow in `src/releaseScrapeService.ts`.
+- Reliable release intelligence for sealed products.
+- Transparent provenance in API payloads.
+- Hybrid top-chase strategy (deterministic first, editorial fallback second).
+- Safe pricing behavior: avoid misleading SKU pricing when market matches are weak.
 
-## 2. Key files to know first
+## Production Snapshot
 
-- `src/releaseSyncPipeline.ts` (orchestration)
-- `src/releaseSyncService.ts` (Tier A sync + link/pricing cleanup helpers)
-- `src/releaseScrapeService.ts` (scrape/extract/merge/confidence)
-- `src/releaseIntelSources.ts` (source registry, tiers, sourceType, include flags)
-- `src/controllers/releasesController.ts` (products API shaping + dedupe + derived trust fields)
-- `src/releaseStrategyService.ts` (strategy prompt rules)
-- `src/marketDataService.ts` (integration scaffold, not fully implemented)
+- Platform: Railway
+- API base: `https://cardcommand-api-production.up.railway.app`
+- Sync trigger: `POST /api/admin/releases/sync` (auth required)
+- Sync status: `GET /api/admin/releases/sync/status` (auth required)
+- Core products endpoint: `GET /api/releases/products`
 
-## 3. Recently completed behavior
+## Core Architecture (Release Pipeline)
 
-- Added source registry metadata (`sourceType`, `includeInScrape`) and expanded sources.
-- Refactored scrape flow to merge candidates by normalized set name and source trust ranking.
-- Added confidence derivation and status/source metadata in products API output.
-- Hardened deduplication logic for naming variants (e.g., Mega Evolution ordering variants).
-- Prevented misleading fallback pricing for Pokemon `set_default` products.
-- Added cleanup pass `backfillPokemonSetDefaultPricing()` into pipeline.
+Primary orchestration: `src/releaseSyncPipeline.ts`
 
-## 4. Required product rules (must preserve)
+Pipeline stages:
+1. Tier A release sync (`syncAllReleases`)
+2. Tier A link backfill (`backfillTierALinks`)
+3. Placeholder price cleanup (`backfillPokemonSetDefaultPricing`)
+4. SKU creation backfill (`backfillPokemonSealedSkuRows`)
+5. Sealed market pricing backfill (`backfillSealedProductMarketPricing`)
+6. Top chase enrichment (`backfillReleaseTopChasesFromTcg`)
+7. Tier B/C scrape ingest (`scrapeAndUpsertReleaseProducts`)
+8. Strategy backfill (`backfillStrategiesForPokemon`)
 
-- Keep SKU-level product records where available.
-- Pricing display priority: `official MSRP` > `distributor preorder` > `retailer preorder` > no price.
-- If trustworthy price is unavailable, return no price (not a fabricated placeholder).
-- Low-confidence records should still be available to display.
-- AI should extract/normalize/change-detect; it should not be the sole truth arbiter.
+## Hybrid Logic (How It Works)
 
-## 5. Runtime and environment notes
+### Release pricing (sealed products)
 
-- Required:
-  - `DATABASE_URL`
-  - `JWT_SECRET`
-  - `JWT_EXPIRES_IN`
-- Release intelligence related:
-  - `POKEMON_TCG_API_KEY` (optional but recommended)
-  - `OPENAI_API_KEY` (required for AI extraction stage; without it scrape AI extraction is skipped)
-  - `OPENAI_EXTRACTION_MODEL` (optional override)
+- Pricing source lookup uses `marketDataService`.
+- Search strategy is multi-pass:
+  - exact/normalized query variants
+  - strict product-kind preference first
+- Guardrail:
+  - concrete SKU rows (`booster_box`, `booster_bundle`, `elite_trainer_box`, `tin`, etc.) remain kind-strict
+  - `set_default` placeholders may use relaxed fallback
+- Price provenance is stored in `contentsSummary` tags:
+  - `[market_price:<source>:<priceType>:<asOf>]`
+  - `[market_match:<kind>:<name>:<url>]`
 
-## 6. Known technical caveat
+### Top chases
 
-- In `src/releaseScrapeService.ts`, there is a type workaround:
-  - `(prisma as any).releaseProductStrategy.count(...)`
-- This bypasses a Prisma client typing mismatch while builds continue to pass.
+- Primary: rank by card prices (`market > mid > low`) from internal TCG tables.
+- Fallback: trusted editorial list when priced-card coverage is too thin.
+- Provenance is stored in release `description` tag:
+  - `[top_chases_source:price_ranked::]`
+  - `[top_chases_source:editorial_fallback:<url>:<asOf>]`
+- API exposes parsed fields for frontend:
+  - `setTopChases`
+  - `setTopChasesAsOf`
+  - `setTopChasesSource`
+  - `setTopChasesSourceUrl`
 
-## 7. TCG data layer (Phase 1 now implemented)
+## Key Files
 
-- New normalized schema models:
-  - `Game`
-  - `TcgSet`
-  - `TcgCard`
-  - `PriceLatest`
-  - `PriceHistoryDaily`
-  - `ProviderRawCache`
-- Provider architecture:
-  - shared interface and registry under `src/services/tcg/`
-  - `PokemonTcgProvider` enabled
-  - MTG/YGO registered as disabled placeholders for feature-flagged rollout
-- Background sync jobs:
-  - `src/jobs/tcgSyncJob.ts`
-  - sets daily, cards daily, prices every 6h (plus older daily pass)
-  - all reads are DB-only via `/api/tcg/*` endpoints
-- New API endpoints:
-  - `GET /api/tcg/games`
-  - `GET /api/tcg/:game/sets`
-  - `GET /api/tcg/:game/sets/:setId/cards`
-  - `GET /api/tcg/:game/cards/:cardId`
+- `src/releaseSyncPipeline.ts`
+- `src/releaseSyncService.ts`
+- `src/marketDataService.ts`
+- `src/controllers/releasesController.ts`
+- `src/services/release/editorialTopChases.ts`
+- `src/releaseScrapeService.ts`
+- `src/releaseIntelSources.ts`
 
-## 8. Immediate next backend tasks
+## Caveats / Gotchas
 
-1. Finalize release-products API contract so trust/provenance fields are consistently present and typed.
-2. Add/confirm source citations and change history payload shape for frontend display.
-3. Keep validating no duplicate logical releases and no placeholder Pokemon pricing regression after sync.
+- Sync run-state is currently in-memory (`releaseSyncRunState`), so status history resets across deploy restarts.
+- Long runs can appear as `running` for several minutes; verify with data reads too.
+- If no trustworthy market match exists, API should return no price instead of forced fallback.
 
-## 9. Quick verification commands
+## Environment Variables (Release/TCG Relevant)
+
+- `DATABASE_URL`
+- `JWT_SECRET`
+- `JWT_EXPIRES_IN`
+- `OPENAI_API_KEY` (scrape extraction; optional for deterministic-only operation)
+- `OPENAI_EXTRACTION_MODEL` (optional)
+- `POKEMON_TCG_API_KEY` (recommended)
+- `POKEMON_TCG_TIMEOUT_MS`
+- `TCG_SYNC_ENABLED`
+- `TCG_POKEMON_ENABLED`
+- `TCG_MTG_ENABLED`
+- `TCG_YUGIOH_ENABLED`
+- `TCG_RECENT_SET_WINDOW_DAYS`
+
+## What We Would Do Differently Next
+
+- Persist sync run state in DB instead of in-memory module state.
+- Separate release metadata provenance from freeform `description`/`contentsSummary` tags into first-class columns.
+- Add source scoring telemetry per query attempt so pricing misses are diagnosable without log spelunking.
+- Add secondary sealed market source fallback (e.g., sold-listing median) behind explicit provenance labeling.
+
+## Individual Card Roadmap Alignment
+
+This hybrid pattern is intended to be reused for cards:
+- deterministic card prices as primary source
+- editorial/curated fallback for discovery contexts
+- explicit provenance in every UI-visible value
+- strict separation of "price confidence" and "content confidence"
+
+## Quick Resume Commands
 
 ```bash
-# Build validation
+# build
 npm run build
 
-# Manual sync trigger
+# trigger sync (auth required)
 curl -X POST https://cardcommand-api-production.up.railway.app/api/admin/releases/sync \
   -H "Authorization: Bearer <JWT>"
 
-# Inspect releases products payload
-curl https://cardcommand-api-production.up.railway.app/api/releases/products
-
-# Inspect TCG DB-backed APIs
-curl https://cardcommand-api-production.up.railway.app/api/tcg/games
-curl "https://cardcommand-api-production.up.railway.app/api/tcg/pokemon/sets?sort=release_date_desc"
+# inspect sealed products payload
+curl "https://cardcommand-api-production.up.railway.app/api/releases/products?category=pokemon&perPage=200"
 ```
 
 ---
 
-*Last Updated: February 12, 2026*
+*Last Updated: 2026-02-15*
